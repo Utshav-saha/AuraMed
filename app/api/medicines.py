@@ -3,7 +3,6 @@ from pydantic import BaseModel
 from typing import Optional
 import json
 from google.genai import types
-
 from app.database import supabase, model, gemini_client
 
 router = APIRouter()
