@@ -123,3 +123,46 @@ BEGIN
 END;
 $$;
 
+
+
+
+CREATE OR REPLACE FUNCTION match_leaflets (
+  query_embedding vector(768),
+  match_threshold float,
+  match_count int,
+  target_generic_id bigint DEFAULT NULL
+)
+RETURNS TABLE (
+  generic_id bigint,
+  generic_name text,
+  content text,
+  similarity float
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    g.id AS generic_id,
+    g.name AS generic_name,
+
+    CONCAT_WS(E'\n\n',
+      'INDICATIONS: ' || g.indication_description,
+      'PHARMACOLOGY: ' || g.pharmacology_description,
+      'DOSAGE & ADMINISTRATION: ' || g.dosage_description,
+      'SIDE EFFECTS: ' || g.side_effects_description,
+      'PREGNANCY & LACTATION: ' || g.pregnancy_and_lactation_description,
+      'PRECAUTIONS: ' || g.precautions_description,
+      'OVERDOSE: ' || g.overdose_effects_description
+    ) AS content,
+    1 - (g.leaflet_embedding <=> query_embedding) AS similarity
+  FROM 
+    public.generics g
+  WHERE
+    (target_generic_id IS NULL OR g.id = target_generic_id)
+    AND 1 - (g.leaflet_embedding <=> query_embedding) > match_threshold
+  ORDER BY
+    g.leaflet_embedding <=> query_embedding ASC
+  LIMIT match_count;
+END;
+$$;
