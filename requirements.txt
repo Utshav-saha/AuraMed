@@ -36,6 +36,7 @@ narwhals==2.22.1
 networkx==3.6.1
 numpy==2.5.0
 packaging==26.2
+Pillow>=11.0.0
 postgrest==2.31.0
 propcache==0.5.2
 pyasn1==0.6.3

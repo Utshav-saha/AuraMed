@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # new created api files import
-from app.api import chatbot, medicines, search_pharmacy  
+from app.api import chatbot, medicines, prescription_scan, search_pharmacy
 
 
 app = FastAPI(title="AuraMed")
@@ -34,6 +34,12 @@ app.include_router(
     chatbot.router,
     prefix="/api/v1/chat",
     tags=["Drug Safety Chatbot"]
+)
+
+app.include_router(
+    prescription_scan.router,
+    prefix="/api/v1/prescriptions",
+    tags=["Prescription Scanner"]
 )
 
 @app.get("/")
