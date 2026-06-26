@@ -35,6 +35,18 @@ class PrescriptionResponse(BaseModel):
     location_issued: Coordinate
     items: List[PrescriptionItem]
 
+class TotalDosage(BaseModel):
+    medicine_id: int
+    total_dosage: int
+
+
+class DosageCalculationRequest(BaseModel):
+    items: List[PrescriptionItem]
+
+class DosageCalculationResponse(BaseModel):
+    total_dosages: List[TotalDosage]
+
+
 
 @router.get("/get_patient", response_model=PatientResponse)
 async def get_patient(user_id: int):
@@ -117,4 +129,28 @@ async def get_prescriptions(patient_id: int):
     finally:
         await conn.close()
 
+
+
+@router.post("/calculate_dosage", response_model=DosageCalculationResponse)
+async def calculate_dosage(request: DosageCalculationRequest):
+    dict_dosage = defaultdict(int)
+    
+    for item in request.items:
+        try:
+            daily_dosage = sum(int(num) for num in item.dosage_instruction.split('+'))
+            total = daily_dosage * item.duration
+            dict_dosage[item.medicine_id] += total
+            
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid dosage instruction '{item.dosage_instruction}' for medicine ID {item.medicine_id}. Must contain only numbers and '+'."
+            )
+
+    response_list = [
+        TotalDosage(medicine_id=med_id, total_dosage=total) 
+        for med_id, total in dict_dosage.items()
+    ]
+    
+    return DosageCalculationResponse(total_dosages=response_list)
 

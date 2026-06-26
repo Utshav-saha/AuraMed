@@ -59,7 +59,7 @@ async def search_pharmacies(request: SearchRequest):
         
         generic_ids_list = [record['generic_id'] for record in generic_ids if record['generic_id'] is not None]
 
-        response = supabase.rpc("find_cart_nearby", {
+        response = supabase.rpc("find_nearby_pharmacy", {
             "user_lat": request.user_lat,
             "user_lng": request.user_lng,
             "search_radius_meters": request.search_radius_meters,
