@@ -3,7 +3,8 @@ from pydantic import BaseModel
 from typing import Optional
 import json
 from google.genai import types
-from app.database import supabase, model, gemini_client
+from app.database import supabase, model, gemini_client , DATABASE_URL  
+import asyncpg
 
 router = APIRouter()
 
@@ -103,3 +104,52 @@ async def search(
     
 
 @router.get("/fetch_medicine_details")
+async def fetch_medicine_details(medicine_id: int):
+
+    conn = await asyncpg.connect(DATABASE_URL)
+    try:
+        query = """
+            select m.id, m.brand_name, m.type, m.slug, m.strength, m.package_container, m.package_size, m.manufacturer_name, d.name as dosage_form, g.generic_name, g.indication_name, g.indication_description, g.therapeutic_class_description,
+            g.pharmacology_description, g.dosage_description, g.administration_description, g.interaction_description, g.contraindications_description, g.side_effects_description, g.pregnancy_and_lactation_description, g.precautions_description, g.pediatric_usage_description, g.overdose_effects_description, g.duration_of_treatment_description, g.reconstitution_description, g.storage_conditions_description, dc.name as drug_class_name
+            from medicines m
+            left join dosage_forms d on m.dosage_form_id = d.id
+            left join generics g on m.generic_id = g.id
+            left join drug_classes dc on g.drug_class_id = dc.id
+            where m.id = $1
+        """
+        result = await conn.fetchrow(query, medicine_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="Medicine not found")
+        
+        return MedicineDetails(
+            id=result["id"],
+            brand_name=result["brand_name"],
+            drug_type=result["type"],
+            slug=result["slug"],
+            strength=result["strength"],
+            package_container=result["package_container"],
+            package_size=result["package_size"],
+            manufacturer_name=result["manufacturer_name"],
+            dosage_form=result["dosage_form"],
+            generic_name=result["generic_name"],
+            indication_name=result["indication_name"],
+            indication_description=result["indication_description"],
+            therapeutic_class_description=result["therapeutic_class_description"],
+            pharmacology_description=result["pharmacology_description"],
+            dosage_description=result["dosage_description"],
+            administration_description=result["administration_description"],
+            interaction_description=result["interaction_description"],
+            contraindications_description=result["contraindications_description"],
+            side_effects_description=result["side_effects_description"],
+            pregnancy_and_lactation_description=result["pregnancy_and_lactation_description"],
+            precautions_description=result["precautions_description"],
+            pediatric_usage_description=result["pediatric_usage_description"],
+            overdose_effects_description=result["overdose_effects_description"],
+            duration_of_treatment_description=result["duration_of_treatment_description"],
+            reconstitution_description=result["reconstitution_description"],
+            storage_conditions_description=result["storage_conditions_description"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching medicine details: {str(e)}")
+    finally:
+        await conn.close()  
