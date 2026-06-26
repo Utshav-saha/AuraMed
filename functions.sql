@@ -166,3 +166,46 @@ BEGIN
   LIMIT match_count;
 END;
 $$;
+
+
+CREATE OR REPLACE FUNCTION process_medicine_reminders()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  reminder RECORD;
+  resend_api_key text := 'resend api key'; 
+  payload jsonb;
+BEGIN
+  FOR reminder IN 
+    SELECT id, patient_email, medicine_name, schedule_time 
+    FROM public.patient_reminders 
+    WHERE status = 'pending' 
+      AND schedule_time > NOW() 
+      AND schedule_time <= (NOW() + INTERVAL '10 minutes')
+  LOOP
+    
+    payload := jsonb_build_object(
+      'from', 'Acme <onboarding@resend.dev>', 
+      'to', reminder.patient_email,
+      'subject', 'Medicine Reminder: ' || reminder.medicine_name,
+      'html', '<p>Hi! It is almost time for your medicine.</p><p>Please take your <strong>' || reminder.medicine_name || '</strong> at ' || to_char(reminder.schedule_time, 'HH12:MI AM') || '.</p>'
+    );
+
+    PERFORM net.http_post(
+      url := 'https://api.resend.com/emails',
+      body := payload,
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'Authorization', 'Bearer ' || resend_api_key
+      )
+    );
+
+    UPDATE public.patient_reminders 
+    SET status = 'sent' 
+    WHERE id = reminder.id;
+    
+  END LOOP;
+END;
+$$;

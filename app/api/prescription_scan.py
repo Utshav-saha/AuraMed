@@ -1,12 +1,12 @@
 import io
 from typing import Optional
-
+import asyncpg
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from google.genai import types
 from PIL import Image
 from pydantic import BaseModel
 
-from app.database import gemini_client, model, supabase
+from app.database import DATABASE_URL, gemini_client, model, supabase
 
 router = APIRouter()
 
@@ -237,3 +237,20 @@ async def scan_prescription(
         raw_ocr_text=extraction.raw_ocr_text,
         items=item_results,
     )
+
+
+@router.post("/add_prescription_from_qr")
+async def add_prescription_from_qr(patient_id: int, id: int):
+    conn = await asyncpg.connect(DATABASE_URL)
+    try:
+
+        query = """
+            update prescriptions
+            set patient_id = $1
+            where id = $2
+        """
+        await conn.execute(query, patient_id, id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await conn.close()
