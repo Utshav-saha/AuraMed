@@ -254,3 +254,20 @@ async def add_prescription_from_qr(patient_id: int, id: int):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         await conn.close()
+
+@router.post("/remove_prescription")
+async def remove_prescription(patient_id: int , id:int):
+    conn = await asyncpg.connect(DATABASE_URL)
+    try:
+
+        Query = """
+                delete from prescriptions
+                where patient_id = $1 && id = $2
+                """
+        
+        await conn.execute(Query, patient_id, id)
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await conn.close()

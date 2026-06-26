@@ -19,6 +19,35 @@ class QueryAnalysis(BaseModel):
     search_type: str
     optimized_query: str
 
+
+class MedicineDetails(BaseModel):
+    id: int
+    brand_name : str
+    drug_type: Optional[str] = None 
+    slug: Optional[str] = None 
+    strength: Optional[str] = None 
+    package_container: Optional[str] = None 
+    package_size: Optional[str] = None 
+    manufacturer_name: Optional[str] = None 
+    dosage_form: Optional[str] = None 
+    generic_name: Optional[str] = None 
+    indication_name: Optional[str] = None 
+    indication_description: Optional[str] = None 
+    therapeutic_class_description: Optional[str] = None 
+    pharmacology_description: Optional[str] = None 
+    dosage_description: Optional[str] = None 
+    administration_description: Optional[str] = None 
+    interaction_description: Optional[str] = None 
+    contraindications_description: Optional[str] = None 
+    side_effects_description: Optional[str] = None 
+    pregnancy_and_lactation_description: Optional[str] = None 
+    precautions_description: Optional[str] = None 
+    pediatric_usage_description: Optional[str] = None 
+    overdose_effects_description: Optional[str] = None 
+    duration_of_treatment_description: Optional[str] = None 
+    reconstitution_description: Optional[str] = None 
+    storage_conditions_description: Optional[str] = None 
+
 @router.get("/search-medicines", response_model=list[SearchResponse])
 async def search(
     q: str = Query(..., description="Type a symptom or a medicine name"),
@@ -71,3 +100,6 @@ async def search(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Smart Search Error: {str(e)}")
+    
+
+@router.get("/fetch_medicine_details")
