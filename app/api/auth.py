@@ -20,10 +20,6 @@ router = APIRouter()
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-insecure-change-me")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 7
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-
-# Sentinel stored in password_hash for OAuth-only accounts (never matches a password)
-OAUTH_SENTINEL = "oauth$google"
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -119,10 +115,6 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
-
-
-class GoogleRequest(BaseModel):
-    credential: str
 
 
 class UserOut(BaseModel):
@@ -221,58 +213,6 @@ async def login(req: LoginRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Login error: {str(e)}")
-    finally:
-        await conn.close()
-
-
-@router.post("/google", response_model=AuthResponse)
-async def google_login(req: GoogleRequest):
-    if not GOOGLE_CLIENT_ID:
-        raise HTTPException(
-            status_code=503,
-            detail="Google Sign-In is not configured. Set GOOGLE_CLIENT_ID on the server.",
-        )
-
-    # Verify the Google ID token (google-auth is already installed)
-    try:
-        from google.oauth2 import id_token as google_id_token
-        from google.auth.transport import requests as google_requests
-
-        idinfo = google_id_token.verify_oauth2_token(
-            req.credential, google_requests.Request(), GOOGLE_CLIENT_ID
-        )
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid Google credential.")
-
-    email = (idinfo.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(status_code=401, detail="Google account has no email.")
-    name = idinfo.get("name") or email.split("@")[0]
-
-    conn = await asyncpg.connect(DATABASE_URL)
-    try:
-        user_row = await conn.fetchrow(
-            "SELECT id, email, role FROM users WHERE email = $1", email
-        )
-        if not user_row:
-            async with conn.transaction():
-                user_row = await conn.fetchrow(
-                    """
-                    INSERT INTO users (email, password_hash, role)
-                    VALUES ($1, $2, 'Patient')
-                    RETURNING id, email, role
-                    """,
-                    email,
-                    OAUTH_SENTINEL,
-                )
-                await conn.execute(
-                    "INSERT INTO patients (user_id, name) VALUES ($1, $2)",
-                    user_row["id"],
-                    name,
-                )
-        return await _build_auth_response(conn, user_row)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Google login error: {str(e)}")
     finally:
         await conn.close()
 

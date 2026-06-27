@@ -107,6 +107,94 @@ export type AuthResponse = {
   patient: AuthPatient | null;
 };
 
+// Full clinical leaflet for a single medicine (GET /medicines/fetch_medicine_details)
+export type MedicineDetails = {
+  id: number;
+  brand_name: string;
+  drug_type: string | null;
+  slug: string | null;
+  strength: string | null;
+  package_container: string | null;
+  package_size: string | null;
+  manufacturer_name: string | null;
+  dosage_form: string | null;
+  generic_name: string | null;
+  indication_name: string | null;
+  indication_description: string | null;
+  therapeutic_class_description: string | null;
+  pharmacology_description: string | null;
+  dosage_description: string | null;
+  administration_description: string | null;
+  interaction_description: string | null;
+  contraindications_description: string | null;
+  side_effects_description: string | null;
+  pregnancy_and_lactation_description: string | null;
+  precautions_description: string | null;
+  pediatric_usage_description: string | null;
+  overdose_effects_description: string | null;
+  duration_of_treatment_description: string | null;
+  reconstitution_description: string | null;
+  storage_conditions_description: string | null;
+};
+
+export type Coordinate = {
+  latitude: number;
+  longitude: number;
+};
+
+export type PatientProfile = {
+  patient_id: number;
+  name: string;
+  email: string;
+  user_id: number;
+  home_location: Coordinate;
+};
+
+// A single line item on a stored prescription (GET /patient_page/get_prescriptions)
+export type PrescriptionLineItem = {
+  medicine_id: number;
+  dosage_instruction: string;
+  duration: number;
+};
+
+export type Prescription = {
+  prescription_id: number;
+  patient_id: number;
+  doctor_id: number;
+  prescribed_at: string;
+  disease_diagnosis: string;
+  location_issued: Coordinate;
+  items: PrescriptionLineItem[];
+};
+
+export type TotalDosage = {
+  medicine_id: number;
+  total_dosage: number;
+};
+
+// A row from the patient's cart (GET /cart/get_cart_items and /cart/past_orders)
+export type CartItemRow = {
+  cart_id: number;
+  medicine_id: number;
+  count: number;
+  order_status: string;
+  assigned_pharmacy_name: string | null;
+  patient_id: number;
+};
+
+export type CheckoutAssignment = {
+  medicine_id: number;
+  pharmacy_id: number;
+  pharmacy_name: string;
+  distance_meters: number;
+};
+
+export type CheckoutResult = {
+  status: string;
+  assignments: CheckoutAssignment[];
+  unassigned_medicine_ids: number[];
+};
+
 export const api = {
   async searchMedicines(query: string, limit = 10): Promise<MedicineResult[]> {
     try {
@@ -153,6 +241,13 @@ export const api = {
     }
   },
 
+  fetchMedicineDetails(medicineId: number): Promise<MedicineDetails> {
+    return request<MedicineDetails>(
+      `/api/v1/medicines/fetch_medicine_details?medicine_id=${medicineId}`
+    );
+  },
+
+  // ── Cart ──────────────────────────────────────────────────────
   addToCart(payload: {
     medicine_id: number;
     count: number;
@@ -166,6 +261,75 @@ export const api = {
     });
   },
 
+  removeFromCart(cartId: number): Promise<{ message: string }> {
+    return request<{ message: string }>(
+      `/api/v1/cart/remove_from_cart?cart_id=${cartId}`,
+      { method: "POST" }
+    );
+  },
+
+  getCartItems(patientId: number): Promise<CartItemRow[]> {
+    return request<CartItemRow[]>(
+      `/api/v1/cart/get_cart_items?patient_id=${patientId}`
+    );
+  },
+
+  pastOrders(patientId: number): Promise<CartItemRow[]> {
+    return request<CartItemRow[]>(
+      `/api/v1/cart/past_orders?patient_id=${patientId}`
+    );
+  },
+
+  checkout(payload: {
+    patient_id: number;
+    items: { medicine_id: number; count: number }[];
+    user_lat: number;
+    user_lng: number;
+    search_radius_meters?: number;
+  }): Promise<CheckoutResult> {
+    return request<CheckoutResult>("/api/v1/cart/checkout", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // ── Patient page ──────────────────────────────────────────────
+  getPatient(userId: number): Promise<PatientProfile> {
+    return request<PatientProfile>(
+      `/api/v1/patient_page/get_patient?user_id=${userId}`
+    );
+  },
+
+  getPrescriptions(patientId: number): Promise<Prescription[]> {
+    return request<Prescription[]>(
+      `/api/v1/patient_page/get_prescriptions?patient_id=${patientId}`
+    );
+  },
+
+  calculateDosage(
+    items: { medicine_id: number; dosage_instruction: string; duration: number }[]
+  ): Promise<{ total_dosages: TotalDosage[] }> {
+    return request<{ total_dosages: TotalDosage[] }>(
+      "/api/v1/patient_page/calculate_dosage",
+      { method: "POST", body: JSON.stringify({ items }) }
+    );
+  },
+
+  // ── Prescriptions (QR linking) ────────────────────────────────
+  addPrescriptionFromQr(patientId: number, prescriptionId: number): Promise<void> {
+    return request<void>(
+      `/api/v1/prescriptions/add_prescription_from_qr?patient_id=${patientId}&id=${prescriptionId}`,
+      { method: "POST" }
+    );
+  },
+
+  removePrescription(patientId: number, prescriptionId: number): Promise<void> {
+    return request<void>(
+      `/api/v1/prescriptions/remove_prescription?patient_id=${patientId}&id=${prescriptionId}`,
+      { method: "POST" }
+    );
+  },
+
   register(payload: { name: string; email: string; password: string }): Promise<AuthResponse> {
     return request<AuthResponse>("/api/v1/auth/register", {
       method: "POST",
@@ -177,13 +341,6 @@ export const api = {
     return request<AuthResponse>("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify(payload),
-    });
-  },
-
-  googleLogin(credential: string): Promise<AuthResponse> {
-    return request<AuthResponse>("/api/v1/auth/google", {
-      method: "POST",
-      body: JSON.stringify({ credential }),
     });
   },
 
@@ -220,13 +377,21 @@ export const api = {
         if (!res.ok || !res.body) throw new Error(`Chatbot error: ${res.status}`);
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = ""; // holds an incomplete trailing SSE line between reads
         function pump() {
           reader.read().then(({ done, value }) => {
-            if (done) { onDone(); return; }
-            const chunk = decoder.decode(value, { stream: true });
-            chunk.split("\n").forEach((line) => {
+            if (done) {
+              // flush any remaining buffered line
+              if (buffer.startsWith("data: ")) onChunk(buffer.slice(6));
+              onDone();
+              return;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? ""; // last item may be a partial line
+            for (const line of lines) {
               if (line.startsWith("data: ")) onChunk(line.slice(6));
-            });
+            }
             pump();
           });
         }

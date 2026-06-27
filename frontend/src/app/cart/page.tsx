@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Bell, Settings, Calendar, MapPin, Calculator, ShoppingCart,
   Minus, Plus, Trash2, ShieldCheck, Truck, Tag, ChevronRight,
-  PackageOpen, LayoutDashboard, Pill,
+  PackageOpen, LayoutDashboard, Pill, Loader2, AlertCircle,
 } from "lucide-react";
+import { api } from "@/lib/api";
+import { loadEnrichedCart, type EnrichedCartItem } from "@/lib/data";
+import { useAuth } from "@/lib/auth-context";
 
 const NAV_ITEMS = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
@@ -16,76 +19,104 @@ const NAV_ITEMS = [
   { icon: ShoppingCart, label: "View Cart", href: "/cart", active: true },
 ];
 
-interface CartItem {
-  id: number;
-  brandName: string;
-  genericName: string;
-  manufacturer: string;
-  strength: string;
-  unitPrice: number;
-  quantity: number;
-  rxRequired: boolean;
-}
-
-const INITIAL_CART: CartItem[] = [
-  {
-    id: 1,
-    brandName: "Azithromycin",
-    genericName: "Azithromycin Dihydrate",
-    manufacturer: "Beximco Pharmaceuticals",
-    strength: "500mg",
-    unitPrice: 12.5,
-    quantity: 1,
-    rxRequired: true,
-  },
-  {
-    id: 2,
-    brandName: "Paracetamol",
-    genericName: "Acetaminophen",
-    manufacturer: "Square Pharmaceuticals",
-    strength: "500mg",
-    unitPrice: 3.2,
-    quantity: 2,
-    rxRequired: false,
-  },
-  {
-    id: 3,
-    brandName: "Cetirizine",
-    genericName: "Cetirizine Hydrochloride",
-    manufacturer: "Renata Limited",
-    strength: "10mg",
-    unitPrice: 5.8,
-    quantity: 1,
-    rxRequired: false,
-  },
-];
-
 const DELIVERY_FEE = 2.5;
 const TAX_RATE = 0.05;
 
 export default function CartPage() {
-  const [cart, setCart] = useState<CartItem[]>(INITIAL_CART);
+  const { patient } = useAuth();
+  const patientId = patient?.id ?? 1; // placeholder fallback for guest mode
+
+  const [cart, setCart] = useState<EnrichedCartItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [promoCode, setPromoCode] = useState("");
   const [promoApplied, setPromoApplied] = useState(false);
-  const [ordered, setOrdered] = useState(false);
+  const [placingOrder, setPlacingOrder] = useState(false);
+  const [orderResult, setOrderResult] = useState<{ assigned: number; unassigned: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<Record<number, boolean>>({});
 
-  const updateQty = (id: number, delta: number) =>
+  // Load the patient's pending cart on mount
+  useEffect(() => {
+    let cancelled = false;
+    loadEnrichedCart(patientId)
+      .then((items) => { if (!cancelled) setCart(items); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [patientId]);
+
+  // Quantity is local-only: the backend has no update-count endpoint, so the
+  // adjusted counts are sent at checkout but not persisted to the cart row.
+  const updateQty = (cartId: number, delta: number) =>
     setCart((prev) =>
       prev.map((item) =>
-        item.id === id ? { ...item, quantity: Math.max(1, item.quantity + delta) } : item
+        item.cart_id === cartId ? { ...item, count: Math.max(1, item.count + delta) } : item
       )
     );
 
-  const removeItem = (id: number) => setCart((prev) => prev.filter((item) => item.id !== id));
+  const removeItem = useCallback(async (cartId: number) => {
+    setRemoving((p) => ({ ...p, [cartId]: true }));
+    const snapshot = cart;
+    setCart((prev) => prev.filter((item) => item.cart_id !== cartId)); // optimistic
+    try {
+      await api.removeFromCart(cartId);
+    } catch {
+      setCart(snapshot); // rollback on failure
+      setError("Couldn't remove that item. Please try again.");
+    } finally {
+      setRemoving((p) => { const n = { ...p }; delete n[cartId]; return n; });
+    }
+  }, [cart]);
 
-  const subtotal = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  const clearAll = useCallback(async () => {
+    const snapshot = cart;
+    setCart([]); // optimistic
+    try {
+      await Promise.all(snapshot.map((item) => api.removeFromCart(item.cart_id)));
+    } catch {
+      setCart(snapshot);
+      setError("Couldn't clear the cart. Please try again.");
+    }
+  }, [cart]);
+
+  const placeOrder = useCallback(() => {
+    if (cart.length === 0) return;
+    setError(null);
+    setPlacingOrder(true);
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const res = await api.checkout({
+            patient_id: patientId,
+            items: cart.map((c) => ({ medicine_id: c.medicine_id, count: c.count })),
+            user_lat: pos.coords.latitude,
+            user_lng: pos.coords.longitude,
+          });
+          setOrderResult({
+            assigned: res.assignments.length,
+            unassigned: res.unassigned_medicine_ids.length,
+          });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Checkout failed. Please try again.");
+        } finally {
+          setPlacingOrder(false);
+        }
+      },
+      () => {
+        setError("Location access denied. Enable location to assign nearby pharmacies.");
+        setPlacingOrder(false);
+      }
+    );
+  }, [cart, patientId]);
+
+  const subtotal = cart.reduce((sum, item) => sum + item.unit_price * item.count, 0);
   const discount = promoApplied ? subtotal * 0.1 : 0;
   const tax = (subtotal - discount) * TAX_RATE;
   const total = subtotal - discount + tax + (cart.length > 0 ? DELIVERY_FEE : 0);
 
   const fmt = (n: number) => `$${n.toFixed(2)}`;
 
-  if (ordered) {
+  if (orderResult) {
     return (
       <div className="flex flex-col h-screen bg-[#EDF1F9] overflow-hidden">
         <NavBar />
@@ -97,15 +128,18 @@ export default function CartPage() {
                 <ShieldCheck size={30} className="text-[#22A06B]" />
               </div>
               <h2 className="text-[20px] font-bold text-[#1B2A4A]">Order Placed!</h2>
-              <p className="text-[13px] text-[#9DAABF] max-w-[280px] leading-relaxed">
-                Your medicines have been ordered. You'll receive a confirmation shortly.
+              <p className="text-[13px] text-[#9DAABF] max-w-[320px] leading-relaxed">
+                {orderResult.assigned} medicine{orderResult.assigned === 1 ? "" : "s"} assigned to nearby pharmacies.
+                {orderResult.unassigned > 0
+                  ? ` ${orderResult.unassigned} couldn't be matched to a pharmacy in range.`
+                  : ""}
               </p>
-              <button
-                onClick={() => { setOrdered(false); setCart(INITIAL_CART); }}
-                className="aura-btn-primary px-6 py-2.5 text-[13px] font-semibold mt-2"
+              <a
+                href="/dashboard"
+                className="aura-btn-primary px-6 py-2.5 text-[13px] font-semibold mt-2 inline-block"
               >
-                Back to Cart
-              </button>
+                Back to Dashboard
+              </a>
             </div>
           </main>
         </div>
@@ -134,7 +168,7 @@ export default function CartPage() {
               </div>
               {cart.length > 0 && (
                 <button
-                  onClick={() => setCart([])}
+                  onClick={clearAll}
                   className="text-[12px] text-[#D94F4F] hover:underline font-medium"
                 >
                   Clear all
@@ -142,7 +176,19 @@ export default function CartPage() {
               )}
             </div>
 
-            {cart.length === 0 ? (
+            {error && (
+              <p className="text-[12px] text-[#D94F4F] flex items-center gap-1.5 shrink-0">
+                <AlertCircle size={13} />
+                {error}
+              </p>
+            )}
+
+            {loading ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center py-16">
+                <Loader2 size={26} className="text-[#4D8ED6] animate-spin" />
+                <p className="text-[13px] text-[#6A7898]">Loading your cart…</p>
+              </div>
+            ) : cart.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
                 <div className="w-14 h-14 rounded-full bg-[#EAF2FF] flex items-center justify-center">
                   <PackageOpen size={26} className="text-[#B8D4F5]" />
@@ -157,10 +203,10 @@ export default function CartPage() {
               <div className="flex flex-col gap-3">
                 {cart.map((item) => (
                   <div
-                    key={item.id}
+                    key={item.cart_id}
                     className="bg-white rounded-[18px] border border-[rgba(215,225,245,0.70)] shadow-[0_2px_16px_rgba(140,158,205,0.09)] p-5 flex items-center gap-5"
                   >
-                    {/* Medicine icon placeholder */}
+                    {/* Medicine icon */}
                     <div className="w-12 h-12 rounded-2xl bg-[#EAF2FF] flex items-center justify-center shrink-0">
                       <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                         <rect x="3" y="8" width="18" height="13" rx="3" fill="#B8D4F5" />
@@ -173,31 +219,34 @@ export default function CartPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-[14px] font-semibold text-[#1B2A4A]">
-                          {item.brandName} <span className="font-normal text-[#9DAABF]">{item.strength}</span>
+                          {item.brand_name}{" "}
+                          {item.strength && <span className="font-normal text-[#9DAABF]">{item.strength}</span>}
                         </p>
-                        {item.rxRequired && (
-                          <span className="text-[9.5px] font-bold text-[#4D8ED6] bg-[#EAF2FF] px-2 py-0.5 rounded-full tracking-wide">
-                            Rx REQUIRED
+                        {item.assigned_pharmacy_name && (
+                          <span className="text-[9.5px] font-bold text-[#22A06B] bg-[#E6F7F0] px-2 py-0.5 rounded-full tracking-wide">
+                            {item.assigned_pharmacy_name}
                           </span>
                         )}
                       </div>
-                      <p className="text-[12px] text-[#9DAABF] mt-0.5">{item.genericName}</p>
-                      <p className="text-[11px] text-[#B8C4D8] mt-0.5">{item.manufacturer}</p>
+                      <p className="text-[12px] text-[#9DAABF] mt-0.5">{item.generic_name}</p>
+                      {item.manufacturer_name && (
+                        <p className="text-[11px] text-[#B8C4D8] mt-0.5">{item.manufacturer_name}</p>
+                      )}
                     </div>
 
                     {/* Qty controls */}
                     <div className="flex items-center gap-2 shrink-0">
                       <button
-                        onClick={() => updateQty(item.id, -1)}
+                        onClick={() => updateQty(item.cart_id, -1)}
                         className="w-7 h-7 rounded-lg border border-[#E6ECF7] bg-white flex items-center justify-center text-[#6A7898] hover:border-[#4D8ED6] hover:text-[#4D8ED6] transition-colors"
                       >
                         <Minus size={12} />
                       </button>
                       <span className="text-[14px] font-semibold text-[#1B2A4A] w-6 text-center tabular-nums">
-                        {item.quantity}
+                        {item.count}
                       </span>
                       <button
-                        onClick={() => updateQty(item.id, 1)}
+                        onClick={() => updateQty(item.cart_id, 1)}
                         className="w-7 h-7 rounded-lg border border-[#E6ECF7] bg-white flex items-center justify-center text-[#6A7898] hover:border-[#4D8ED6] hover:text-[#4D8ED6] transition-colors"
                       >
                         <Plus size={12} />
@@ -207,21 +256,22 @@ export default function CartPage() {
                     {/* Price */}
                     <div className="text-right shrink-0 w-20">
                       <p className="text-[15px] font-bold text-[#1B2A4A] tabular-nums">
-                        {fmt(item.unitPrice * item.quantity)}
+                        {fmt(item.unit_price * item.count)}
                       </p>
-                      {item.quantity > 1 && (
+                      {item.count > 1 && (
                         <p className="text-[10.5px] text-[#9DAABF] tabular-nums">
-                          {fmt(item.unitPrice)} each
+                          {fmt(item.unit_price)} each
                         </p>
                       )}
                     </div>
 
                     {/* Remove */}
                     <button
-                      onClick={() => removeItem(item.id)}
-                      className="w-8 h-8 rounded-xl flex items-center justify-center text-[#C8D0E0] hover:bg-[#FDEAEA] hover:text-[#D94F4F] transition-all shrink-0"
+                      onClick={() => removeItem(item.cart_id)}
+                      disabled={removing[item.cart_id]}
+                      className="w-8 h-8 rounded-xl flex items-center justify-center text-[#C8D0E0] hover:bg-[#FDEAEA] hover:text-[#D94F4F] transition-all shrink-0 disabled:opacity-50"
                     >
-                      <Trash2 size={14} />
+                      {removing[item.cart_id] ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                     </button>
                   </div>
                 ))}
@@ -303,12 +353,13 @@ export default function CartPage() {
 
               {/* Place Order */}
               <button
-                disabled={cart.length === 0}
-                onClick={() => setOrdered(true)}
+                disabled={cart.length === 0 || placingOrder}
+                onClick={placeOrder}
                 className="aura-btn-primary w-full py-3 text-[13.5px] font-semibold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
               >
-                Place Order
-                <ChevronRight size={15} />
+                {placingOrder ? <Loader2 size={15} className="animate-spin" /> : null}
+                {placingOrder ? "Placing order…" : "Place Order"}
+                {!placingOrder && <ChevronRight size={15} />}
               </button>
             </div>
 

@@ -1,16 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   Bell, Settings, Calendar, MapPin, Calculator, ShoppingCart,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown,
   Clock, AlarmClock, ScanLine, QrCode, Search,
   PlusCircle, Trash2, AlertTriangle, X, LayoutDashboard, Pill, LogOut,
+  Loader2, CheckCircle2,
 } from "lucide-react";
 import { useRequireAuth } from "@/lib/auth-context";
+import { api } from "@/lib/api";
+import { loadEnrichedPrescriptions } from "@/lib/data";
 
-// ── Types ──────────────────────────────────────────────────────
+// ── View model (adapted from the enriched backend prescription) ─
 interface PrescriptionItem {
   brandName: string;
   genericName: string;
@@ -32,44 +35,6 @@ interface TimeSlot {
   minute: number;
   ampm: "AM" | "PM";
 }
-
-// ── Mock Data (most recent first) ─────────────────────────────
-const PRESCRIPTIONS: Prescription[] = [
-  {
-    id: 1,
-    date: "2026-06-20",
-    doctorName: "Dr. Sarah Chen",
-    specialization: "General Physician",
-    diagnosis: "Upper Respiratory Infection",
-    items: [
-      { brandName: "Azithromycin 500mg", genericName: "Azithromycin Dihydrate", dosageInstruction: "1+0+0", durationDays: 5 },
-      { brandName: "Paracetamol 500mg", genericName: "Acetaminophen", dosageInstruction: "1+1+1", durationDays: 3 },
-      { brandName: "Cetirizine 10mg", genericName: "Cetirizine Hydrochloride", dosageInstruction: "0+0+1", durationDays: 7 },
-    ],
-  },
-  {
-    id: 2,
-    date: "2026-05-14",
-    doctorName: "Dr. James McCoy",
-    specialization: "Pulmonologist",
-    diagnosis: "Acute Bronchitis",
-    items: [
-      { brandName: "Amoxicillin 500mg", genericName: "Amoxicillin Trihydrate", dosageInstruction: "1+1+1", durationDays: 7 },
-      { brandName: "Salbutamol 2mg", genericName: "Albuterol Sulfate", dosageInstruction: "1+0+1", durationDays: 5 },
-    ],
-  },
-  {
-    id: 3,
-    date: "2026-04-02",
-    doctorName: "Dr. Priya Nair",
-    specialization: "Endocrinologist",
-    diagnosis: "Type 2 Diabetes — Follow-up",
-    items: [
-      { brandName: "Metformin 500mg", genericName: "Metformin Hydrochloride", dosageInstruction: "1+0+1", durationDays: 30 },
-      { brandName: "Glimepiride 2mg", genericName: "Glimepiride", dosageInstruction: "1+0+0", durationDays: 30 },
-    ],
-  },
-];
 
 const NAV_ITEMS = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard", active: true },
@@ -144,25 +109,111 @@ function TimePicker({ slot, onChange }: { slot: TimeSlot; onChange: (s: TimeSlot
 export default function DashboardPage() {
   const router = useRouter();
   const { logout, patient } = useRequireAuth();
+  const patientId = patient?.id ?? 1; // placeholder fallback for guest mode
   const displayName = patient?.name ?? "there";
   const firstName = displayName.split(" ")[0];
   const avatarInitial = firstName.charAt(0).toUpperCase() || "A";
+
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [loading, setLoading] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const [reminderOpen, setReminderOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ key: string; slotIdx: number } | null>(null);
+  const [timeSlots, setTimeSlots] = useState<Record<string, TimeSlot[]>>({});
+
+  // Scan flows
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [scanState, setScanState] = useState<"idle" | "scanning" | "done" | "error">("idle");
+  const [scanMessage, setScanMessage] = useState("");
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrId, setQrId] = useState("");
+  const [qrBusy, setQrBusy] = useState(false);
+  const [qrError, setQrError] = useState<string | null>(null);
+
+  const reloadPrescriptions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = await loadEnrichedPrescriptions(patientId);
+      const adapted: Prescription[] = list
+        .map((p) => ({
+          id: p.prescription_id,
+          date: p.prescribed_at,
+          // get_prescriptions returns doctor_id only — no name/specialization
+          doctorName: `Doctor #${p.doctor_id}`,
+          specialization: "Prescribing physician",
+          diagnosis: p.disease_diagnosis,
+          items: p.items.map((it) => ({
+            brandName: it.brand_name,
+            genericName: it.generic_name,
+            dosageInstruction: it.dosage_instruction,
+            durationDays: it.duration,
+          })),
+        }))
+        .sort((a, b) => +new Date(b.date) - +new Date(a.date)); // most recent first
+      setPrescriptions(adapted);
+      setTimeSlots(initSlots(adapted));
+      setCurrentIndex((i) => Math.min(i, Math.max(0, adapted.length - 1)));
+    } finally {
+      setLoading(false);
+    }
+  }, [patientId]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data load
+  useEffect(() => { reloadPrescriptions(); }, [reloadPrescriptions]);
 
   const submitSearch = () => {
     const q = searchQuery.trim();
     if (q.length > 0) router.push(`/medicines?q=${encodeURIComponent(q)}`);
   };
-  const [reminderOpen, setReminderOpen] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<{ key: string; slotIdx: number } | null>(null);
-  const [timeSlots, setTimeSlots] = useState<Record<string, TimeSlot[]>>(() => initSlots(PRESCRIPTIONS));
 
-  const rx = PRESCRIPTIONS[currentIndex];
+  // ── Scan Prescription (Gemini OCR upload) ──────────────────
+  const onScanFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file
+    if (!file) return;
+    setScanState("scanning");
+    setScanMessage("Reading your prescription…");
+    try {
+      const res = await api.scanPrescription(file, patientId);
+      const matched = res.items.filter((i) => i.medicine_id != null).length;
+      setScanState("done");
+      setScanMessage(
+        `Added prescription with ${res.items.length} medicine${res.items.length === 1 ? "" : "s"}` +
+          ` (${matched} matched to our catalog).`
+      );
+      await reloadPrescriptions();
+      setCurrentIndex(0);
+    } catch (err) {
+      setScanState("error");
+      setScanMessage(err instanceof Error ? err.message : "Scan failed. Please try again.");
+    }
+  };
+
+  // ── Scan QR (link an existing prescription by id) ──────────
+  const submitQr = async () => {
+    const id = parseInt(qrId, 10);
+    if (Number.isNaN(id)) { setQrError("Enter a valid prescription ID."); return; }
+    setQrBusy(true);
+    setQrError(null);
+    try {
+      await api.addPrescriptionFromQr(patientId, id);
+      setQrOpen(false);
+      setQrId("");
+      await reloadPrescriptions();
+      setCurrentIndex(0);
+    } catch (err) {
+      setQrError(err instanceof Error ? err.message : "Couldn't link that prescription.");
+    } finally {
+      setQrBusy(false);
+    }
+  };
+
+  const rx = prescriptions[currentIndex];
   const canGoLeft = currentIndex > 0;
-  const canGoRight = currentIndex < PRESCRIPTIONS.length - 1;
-  const prevRx = canGoLeft ? PRESCRIPTIONS[currentIndex - 1] : null;
-  const nextRx = canGoRight ? PRESCRIPTIONS[currentIndex + 1] : null;
+  const canGoRight = currentIndex < prescriptions.length - 1;
+  const prevRx = canGoLeft ? prescriptions[currentIndex - 1] : null;
+  const nextRx = canGoRight ? prescriptions[currentIndex + 1] : null;
 
   const slotKey = (medIdx: number) => `${rx.id}-${medIdx}`;
 
@@ -295,16 +346,22 @@ export default function DashboardPage() {
                       className="rx-card-side flex-1 px-3 py-2 text-left"
                     >
                       <p className="text-[9.5px] font-medium text-[#9DAABF]">{formatDate(prevRx.date)}</p>
-                      <p className="text-[11px] font-medium text-[#6A7898] truncate mt-0.5">{prevRx.doctorName}</p>
+                      <p className="text-[11px] font-medium text-[#6A7898] truncate mt-0.5">{prevRx.diagnosis}</p>
                     </button>
                   ) : (
                     <div className="flex-1" />
                   )}
 
                   <div className="rx-card-center flex-[1.7] px-3.5 py-2.5">
-                    <p className="text-[10.5px] font-semibold text-[#4D8ED6]">{formatDate(rx.date)}</p>
-                    <p className="text-[12.5px] font-bold text-[#1B2A4A] truncate mt-0.5">{rx.doctorName}</p>
-                    <p className="text-[10px] text-[#9DAABF] mt-0.5">{rx.specialization}</p>
+                    {rx ? (
+                      <>
+                        <p className="text-[10.5px] font-semibold text-[#4D8ED6]">{formatDate(rx.date)}</p>
+                        <p className="text-[12.5px] font-bold text-[#1B2A4A] truncate mt-0.5">{rx.diagnosis}</p>
+                        <p className="text-[10px] text-[#9DAABF] mt-0.5">{rx.doctorName}</p>
+                      </>
+                    ) : (
+                      <p className="text-[11px] text-[#9DAABF]">No prescriptions yet</p>
+                    )}
                   </div>
 
                   {nextRx ? (
@@ -313,7 +370,7 @@ export default function DashboardPage() {
                       className="rx-card-side flex-1 px-3 py-2 text-left"
                     >
                       <p className="text-[9.5px] font-medium text-[#9DAABF]">{formatDate(nextRx.date)}</p>
-                      <p className="text-[11px] font-medium text-[#6A7898] truncate mt-0.5">{nextRx.doctorName}</p>
+                      <p className="text-[11px] font-medium text-[#6A7898] truncate mt-0.5">{nextRx.diagnosis}</p>
                     </button>
                   ) : (
                     <div className="flex-1" />
@@ -339,80 +396,132 @@ export default function DashboardPage() {
           {/* ── Prescription Detail Card ───────────────────── */}
           <div className="bg-white rounded-[22px] shadow-[0_2px_20px_rgba(140,158,205,0.11),0_1px_4px_rgba(140,158,205,0.06)] border border-[rgba(215,225,245,0.70)] p-6 flex flex-col flex-1 min-h-0">
 
-            {/* Card header */}
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h2 className="text-[18px] font-bold text-[#1B2A4A]">{rx.doctorName}</h2>
-                <p className="text-[13px] text-[#9DAABF] mt-0.5">{rx.specialization}</p>
+            {loading ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
+                <Loader2 size={26} className="text-[#4D8ED6] animate-spin" />
+                <p className="text-[13px] text-[#6A7898]">Loading your prescriptions…</p>
               </div>
-              <span className="text-[11px] font-medium text-[#6A7898] bg-[#F3F5FB] border border-[#E6ECF7] px-3 py-1.5 rounded-full shrink-0">
-                {formatDate(rx.date)}
-              </span>
-            </div>
-
-            {/* Diagnosis */}
-            <div className="mb-5">
-              <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#4D8ED6] bg-[#EAF2FF] px-3.5 py-1.5 rounded-full">
-                {rx.diagnosis}
-              </span>
-            </div>
-
-            {/* Medicine list */}
-            <div className="flex-1 overflow-y-auto">
-              <p className="text-[10.5px] font-semibold text-[#9DAABF] uppercase tracking-widest mb-3">
-                Prescribed Medicines
-              </p>
-              {rx.items.map((item, i) => (
-                <div key={i} className={`py-4 ${i > 0 ? "border-t border-[#E6ECF7]" : ""}`}>
-                  <div className="flex items-start justify-between gap-6">
-                    <div className="flex-1">
-                      <p className="text-[14.5px] font-semibold text-[#1B2A4A]">{item.brandName}</p>
-                      <p className="text-[12px] text-[#9DAABF] mt-0.5">{item.genericName}</p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-[12.5px] font-medium text-[#6A7898]">{parseDosage(item.dosageInstruction)}</p>
-                      <p className="text-[11px] text-[#9DAABF] mt-0.5">{item.durationDays} days</p>
-                    </div>
-                  </div>
+            ) : !rx ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
+                <div className="w-14 h-14 rounded-full bg-[#EAF2FF] flex items-center justify-center">
+                  <ScanLine size={24} className="text-[#B8D4F5]" />
                 </div>
-              ))}
-            </div>
+                <p className="text-[14px] font-semibold text-[#1B2A4A]">No prescriptions yet</p>
+                <p className="text-[12px] text-[#9DAABF] max-w-[280px] leading-relaxed">
+                  Scan a prescription or link one via QR to see it here.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Card header */}
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <h2 className="text-[18px] font-bold text-[#1B2A4A]">{rx.doctorName}</h2>
+                    <p className="text-[13px] text-[#9DAABF] mt-0.5">{rx.specialization}</p>
+                  </div>
+                  <span className="text-[11px] font-medium text-[#6A7898] bg-[#F3F5FB] border border-[#E6ECF7] px-3 py-1.5 rounded-full shrink-0">
+                    {formatDate(rx.date)}
+                  </span>
+                </div>
 
-            {/* Card bottom actions */}
-            <div className="flex items-center justify-between pt-4 border-t border-[#E6ECF7] mt-2 shrink-0">
-              <a
-                href="/location?exact=1"
-                className="aura-btn-secondary inline-flex items-center gap-2 px-5 py-2.5 text-[13px]"
-              >
-                <MapPin size={14} />
-                Where to Buy
-              </a>
-              <button
-                onClick={() => setReminderOpen(true)}
-                className="aura-btn-primary inline-flex items-center gap-2 px-5 py-2.5 text-[13px]"
-              >
-                <AlarmClock size={14} />
-                Set Reminder
-              </button>
-            </div>
+                {/* Diagnosis */}
+                <div className="mb-5">
+                  <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#4D8ED6] bg-[#EAF2FF] px-3.5 py-1.5 rounded-full">
+                    {rx.diagnosis}
+                  </span>
+                </div>
+
+                {/* Medicine list */}
+                <div className="flex-1 overflow-y-auto">
+                  <p className="text-[10.5px] font-semibold text-[#9DAABF] uppercase tracking-widest mb-3">
+                    Prescribed Medicines
+                  </p>
+                  {rx.items.map((item, i) => (
+                    <div key={i} className={`py-4 ${i > 0 ? "border-t border-[#E6ECF7]" : ""}`}>
+                      <div className="flex items-start justify-between gap-6">
+                        <div className="flex-1">
+                          <p className="text-[14.5px] font-semibold text-[#1B2A4A]">{item.brandName}</p>
+                          <p className="text-[12px] text-[#9DAABF] mt-0.5">{item.genericName}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-[12.5px] font-medium text-[#6A7898]">{parseDosage(item.dosageInstruction)}</p>
+                          <p className="text-[11px] text-[#9DAABF] mt-0.5">{item.durationDays} days</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Card bottom actions */}
+                <div className="flex items-center justify-between pt-4 border-t border-[#E6ECF7] mt-2 shrink-0">
+                  <a
+                    href="/location?exact=1"
+                    className="aura-btn-secondary inline-flex items-center gap-2 px-5 py-2.5 text-[13px]"
+                  >
+                    <MapPin size={14} />
+                    Where to Buy
+                  </a>
+                  <button
+                    onClick={() => setReminderOpen(true)}
+                    className="aura-btn-primary inline-flex items-center gap-2 px-5 py-2.5 text-[13px]"
+                  >
+                    <AlarmClock size={14} />
+                    Set Reminder
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
-          {/* ── Scan Buttons ────────────────────────────────── */}
-          <div className="flex items-center justify-end gap-3 shrink-0 pb-0.5">
-            <button className="aura-btn-secondary inline-flex items-center gap-2 px-5 py-2.5 text-[13px]">
-              <ScanLine size={14} />
-              Scan Prescription
-            </button>
-            <button className="aura-btn-secondary inline-flex items-center gap-2 px-5 py-2.5 text-[13px]">
-              <QrCode size={14} />
-              Scan QR
-            </button>
+          {/* ── Scan status + buttons ───────────────────────── */}
+          <div className="flex items-center justify-between gap-3 shrink-0 pb-0.5">
+            <div className="min-w-0">
+              {scanState === "scanning" && (
+                <span className="inline-flex items-center gap-2 text-[12px] text-[#4D8ED6]">
+                  <Loader2 size={13} className="animate-spin" /> {scanMessage}
+                </span>
+              )}
+              {scanState === "done" && (
+                <span className="inline-flex items-center gap-2 text-[12px] text-[#22A06B]">
+                  <CheckCircle2 size={13} /> {scanMessage}
+                </span>
+              )}
+              {scanState === "error" && (
+                <span className="inline-flex items-center gap-2 text-[12px] text-[#D94F4F]">
+                  <AlertTriangle size={13} /> {scanMessage}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={onScanFile}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={scanState === "scanning"}
+                className="aura-btn-secondary inline-flex items-center gap-2 px-5 py-2.5 text-[13px] disabled:opacity-60"
+              >
+                <ScanLine size={14} />
+                Scan Prescription
+              </button>
+              <button
+                onClick={() => { setQrOpen(true); setQrError(null); }}
+                className="aura-btn-secondary inline-flex items-center gap-2 px-5 py-2.5 text-[13px]"
+              >
+                <QrCode size={14} />
+                Scan QR
+              </button>
+            </div>
           </div>
         </main>
       </div>
 
       {/* ── Set Reminder Overlay ─────────────────────────────── */}
-      {reminderOpen && (
+      {reminderOpen && rx && (
         <div
           className="overlay-backdrop"
           onClick={(e) => { if (e.target === e.currentTarget) setReminderOpen(false); }}
@@ -425,7 +534,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
               <div>
                 <h2 className="text-[17px] font-semibold text-[#1B2A4A]">Set medicine reminder</h2>
-                <p className="text-[12px] text-[#9DAABF] mt-0.5">{rx.doctorName} · {formatDate(rx.date)}</p>
+                <p className="text-[12px] text-[#9DAABF] mt-0.5">{rx.diagnosis} · {formatDate(rx.date)}</p>
               </div>
               <button
                 onClick={() => setReminderOpen(false)}
@@ -496,6 +605,53 @@ export default function DashboardPage() {
                 Save Reminders
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Scan QR Overlay ──────────────────────────────────── */}
+      {qrOpen && (
+        <div
+          className="overlay-backdrop"
+          onClick={(e) => { if (e.target === e.currentTarget && !qrBusy) setQrOpen(false); }}
+        >
+          <div className="overlay-panel w-full max-w-xs mx-4 p-6 flex flex-col gap-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-[15px] font-semibold text-[#1B2A4A]">Link prescription</h3>
+                <p className="text-[11.5px] text-[#9DAABF] mt-0.5">Enter the prescription ID from the QR code.</p>
+              </div>
+              <button
+                onClick={() => !qrBusy && setQrOpen(false)}
+                className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-[#F3F5FB] text-[#9DAABF] shrink-0"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <input
+              type="number"
+              value={qrId}
+              onChange={(e) => setQrId(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submitQr(); }}
+              placeholder="Prescription ID"
+              className="w-full h-10 px-3 bg-[#F3F5FB] border border-[#E6ECF7] rounded-xl text-[13px] text-[#1B2A4A] placeholder:text-[#9DAABF] focus:outline-none focus:border-[#4D8ED6] focus:bg-white transition-all"
+            />
+
+            {qrError && (
+              <p className="text-[11.5px] text-[#D94F4F] flex items-center gap-1.5">
+                <AlertTriangle size={12} /> {qrError}
+              </p>
+            )}
+
+            <button
+              onClick={submitQr}
+              disabled={qrBusy}
+              className="aura-btn-primary w-full py-2.5 text-[13px] font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              {qrBusy ? <Loader2 size={13} className="animate-spin" /> : <QrCode size={13} />}
+              {qrBusy ? "Linking…" : "Link Prescription"}
+            </button>
           </div>
         </div>
       )}

@@ -119,12 +119,12 @@ Finds nearby pharmacies that stock the requested medicines. Returns two routing 
 {
   "one_stop_options": [
     {
+      "pharmacy_id": 12,
       "pharmacy_name": "HealthPlus",
-      "address": "12 Dhanmondi Rd",
       "distance_meters": 320.5,
       "items": [
-        { "provided_medicine_id": 42, "is_exact": true },
-        { "provided_medicine_id": 87, "is_exact": false }
+        { "provided_medicine_id": 42, "is_exact": true, "stock_count": 25 },
+        { "provided_medicine_id": 87, "is_exact": false, "stock_count": 8 }
       ]
     }
   ],
@@ -132,14 +132,23 @@ Finds nearby pharmacies that stock the requested medicines. Returns two routing 
     {
       "medicine_id": 42,
       "pharmacy_name": "HealthPlus",
-      "address": "12 Dhanmondi Rd",
       "distance_meters": 320.5
     },
     {
       "medicine_id": 87,
       "pharmacy_name": "MediCare",
-      "address": "5 Gulshan Ave",
       "distance_meters": 870.0
+    }
+  ],
+  "partial_matches": [
+    {
+      "pharmacy_id": 12,
+      "pharmacy_name": "HealthPlus",
+      "distance_meters": 320.5,
+      "available_medicines": [
+        { "medicine_id": 42, "stock_count": 25, "is_exact": true }
+      ],
+      "medicine_count": 1
     }
   ]
 }
@@ -147,10 +156,32 @@ Finds nearby pharmacies that stock the requested medicines. Returns two routing 
 
 **Logic**
 - Resolves generic IDs for all medicine IDs to allow generic substitutions.
-- Calls `find_nearby_pharmacy` Supabase RPC.
-- `one_stop_options`: pharmacies covering all requested generics, sorted by distance.
-- `multi_stop_route`: for each medicine, the closest pharmacy with an exact match.
+- Calls `find_nearby_pharmacy` Supabase RPC once, then partitions the rows three ways.
+- `one_stop_options`: pharmacies covering **all** requested generics, sorted by distance (top 5).
+- `multi_stop_route`: for each medicine, the closest pharmacy with an **exact** match.
+- `partial_matches`: every pharmacy stocking **≥1** requested medicine, sorted by coverage then distance (top 5). Drives the "find the most" pharmacy view.
 - `is_exact: false` means the pharmacy stocks a generic equivalent instead of the exact brand.
+
+---
+
+### `GET /search-by-name`
+
+Typeahead lookup of pharmacies by store name (case-insensitive `ILIKE` match).
+
+**Query parameters**
+
+| Param   | Type | Required | Default | Description              |
+|---------|------|----------|---------|--------------------------|
+| `q`     | str  | yes      | —       | Partial pharmacy name    |
+| `limit` | int  | no       | `5`     | Max results              |
+
+**Response** `200 application/json` — array of:
+
+```json
+[
+  { "pharmacy_id": 12, "pharmacy_name": "HealthPlus" }
+]
+```
 
 ---
 
@@ -176,13 +207,16 @@ Answers drug safety questions grounded strictly in the official drug leaflet. Re
 
 **Response** `200 text/event-stream`
 
-Each chunk is an SSE line:
+Each chunk is an SSE line, streamed token-by-token as Gemini produces them:
 
 ```
 data: Based on the official leaflet, alcohol is contraindicated...
 
-data: [DONE]
+data:  Consult your physician before combining.
+
 ```
+
+The stream simply ends when generation completes — there is **no** `[DONE]` sentinel; clients should treat the closed connection as completion. On a server-side failure the final chunk is `data: [ERROR: <message>]`.
 
 If no relevant context is found, the stream returns:
 ```
@@ -519,6 +553,52 @@ Lists all non-pending (confirmed, delivered, etc.) orders for a patient.
 | `patient_id` | int  | yes      | Patient row ID |
 
 **Response** `200 application/json` — same shape as `/get_cart_items`.
+
+---
+
+## Authentication `/api/v1/auth`
+
+JWT-based auth. Tokens are HS256, valid for 7 days. Send authenticated requests with
+`Authorization: Bearer <access_token>`.
+
+Both sign-in endpoints return the same `AuthResponse` shape:
+
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "bearer",
+  "user": { "id": "uuid-string", "email": "amanda@auramed.dev", "role": "Patient" },
+  "patient": { "id": 3, "name": "Amanda Sterling" }
+}
+```
+
+> `user.id` is a **string** (UUID). `patient` is `null` if the user has no linked patient row.
+
+### `POST /register`
+
+**Request body**
+
+| Field      | Type | Required | Description                                                       |
+|------------|------|----------|-------------------------------------------------------------------|
+| `name`     | str  | yes      | ≥ 2 chars                                                         |
+| `email`    | str  | yes      | Valid email; must be unique                                       |
+| `password` | str  | yes      | ≥ 8 chars, with upper, lower, number, and special character       |
+
+Creates a `users` row (role `Patient`) plus a linked `patients` row, then returns `AuthResponse`.
+
+**Errors** `409` email already registered · `422` validation failure.
+
+### `POST /login`
+
+**Request body**: `{ "email": str, "password": str }` → `AuthResponse`.
+
+**Errors** `401` invalid email or password.
+
+### `GET /me`
+
+Returns the current `AuthResponse` for the bearer token. Requires `Authorization` header.
+
+**Errors** `401` missing/expired/invalid token · `404` user not found.
 
 ---
 

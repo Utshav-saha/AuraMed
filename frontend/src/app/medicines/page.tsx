@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { api, type MedicineResult } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import DrugSafetyChat from "@/components/DrugSafetyChat";
 
 // ── Nav items ──────────────────────────────────────────────────
 const NAV_ITEMS = [
@@ -272,6 +273,9 @@ function MedicinesPageInner() {
           )}
         </main>
       </div>
+
+      {/* Floating drug-safety assistant (POST /api/v1/chat/chatbot) */}
+      <DrugSafetyChat />
     </div>
   );
 }
