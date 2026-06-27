@@ -1,0 +1,362 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans-base, ui-sans-serif, system-ui, sans-serif);
+  --font-mono: var(--font-geist-mono, ui-monospace, SFMono-Regular, monospace);
+  --font-heading: var(--font-display, var(--font-sans-base));
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ── Design tokens (matches reference image palette) ── */
+:root {
+  /* Page & structure */
+  --page-bg:        #EDF1F9;   /* flat lavender-grey page bg from reference */
+  --card-bg:        #FFFFFF;
+  --nav-bg:         #FFFFFF;
+  --panel-bg:       #FFFFFF;
+  --input-bg:       #F3F5FB;
+  --input-border:   #D8E0F0;
+
+  /* Text hierarchy */
+  --text-dark:      #1B2A4A;   /* headings, primary text */
+  --text-body:      #6A7898;   /* secondary body text */
+  --text-muted:     #9DAABF;   /* labels, placeholder, dim text */
+  --text-blue:      #4D8ED6;   /* primary blue text / links */
+
+  /* Blue palette */
+  --blue-primary:   #4D8ED6;   /* main action blue */
+  --blue-deep:      #3A78C4;   /* hover state */
+  --blue-light:     #EAF2FF;   /* light blue tint backgrounds */
+  --blue-mid:       #B8D4F5;   /* lighter blue borders */
+
+  /* Functional */
+  --green-text:     #22A06B;
+  --green-bg:       #E6F7F0;
+  --red-text:       #D94F4F;
+  --red-bg:         #FDEAEA;
+
+  /* Borders & shadows */
+  --border-card:    rgba(215, 225, 245, 0.70);
+  --border-divider: #E6ECF7;
+  --shadow-card:    0 2px 20px rgba(140, 158, 205, 0.11), 0 1px 4px rgba(140, 158, 205, 0.06);
+  --shadow-nav:     0 1px 12px rgba(140, 158, 205, 0.09);
+  --shadow-btn:     0 3px 14px rgba(77, 142, 214, 0.28);
+  --shadow-overlay: 0 24px 64px rgba(15, 30, 80, 0.18), 0 4px 16px rgba(15, 30, 80, 0.08);
+
+  /* shadcn tokens remapped to health palette */
+  --background: #EDF1F9;
+  --foreground: #1B2A4A;
+  --card: #FFFFFF;
+  --card-foreground: #1B2A4A;
+  --popover: #FFFFFF;
+  --popover-foreground: #1B2A4A;
+  --primary: #4D8ED6;
+  --primary-foreground: #FFFFFF;
+  --secondary: #EAF2FF;
+  --secondary-foreground: #3A78C4;
+  --muted: #F3F5FB;
+  --muted-foreground: #9DAABF;
+  --accent: #4D8ED6;
+  --accent-foreground: #FFFFFF;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #E6ECF7;
+  --input: #F3F5FB;
+  --ring: #B8D4F5;
+  --radius: 0.875rem;
+
+  --chart-1: #4D8ED6;
+  --chart-2: #47BFB0;
+  --chart-3: #7FA8DE;
+  --chart-4: #A8C8F0;
+  --chart-5: #D0E5FF;
+
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #1B2A4A;
+  --sidebar-primary: #4D8ED6;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #EAF2FF;
+  --sidebar-accent-foreground: #3A78C4;
+  --sidebar-border: #E6ECF7;
+  --sidebar-ring: #B8D4F5;
+}
+
+.dark {
+  --background: #151C2E;
+  --foreground: #E8EEF8;
+  --card: #1E2740;
+  --card-foreground: #E8EEF8;
+  --popover: #1E2740;
+  --popover-foreground: #E8EEF8;
+  --primary: #5FA0E0;
+  --primary-foreground: #0F1828;
+  --secondary: #243358;
+  --secondary-foreground: #A8C8F0;
+  --muted: #1A2238;
+  --muted-foreground: #7B90B8;
+  --accent: #5FA0E0;
+  --accent-foreground: #0F1828;
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: rgba(255,255,255,0.09);
+  --input: rgba(255,255,255,0.07);
+  --ring: #4D8ED6;
+  --sidebar: #1E2740;
+  --sidebar-foreground: #E8EEF8;
+  --sidebar-primary: #5FA0E0;
+  --sidebar-primary-foreground: #0F1828;
+  --sidebar-accent: #243358;
+  --sidebar-accent-foreground: #A8C8F0;
+  --sidebar-border: rgba(255,255,255,0.09);
+  --sidebar-ring: #4D8ED6;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+  /* Semantic headings use the display serif (Fraunces) automatically */
+  h1, h2 {
+    font-family: var(--font-display, var(--font-sans-base));
+    letter-spacing: -0.012em;
+  }
+}
+
+/* Explicit display-font utility (hero text, marketing copy) */
+.font-display {
+  font-family: var(--font-display, var(--font-sans-base));
+}
+
+/* ── AuraMed component classes ─────────────────────────────── */
+
+/* Page wrapper */
+.aura-page {
+  background: var(--page-bg);
+  min-height: 100vh;
+}
+
+/* Cards — solid white, generous radius, soft shadow (matches reference) */
+.aura-card {
+  background: var(--card-bg);
+  border-radius: 22px;
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--border-card);
+}
+
+/* Top navigation bar */
+.aura-nav {
+  background: var(--nav-bg);
+  border-bottom: 1px solid var(--border-divider);
+  box-shadow: var(--shadow-nav);
+}
+
+/* Side panel */
+.aura-panel {
+  background: var(--panel-bg);
+  border-radius: 22px;
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--border-card);
+}
+
+/* Search / form inputs */
+.aura-input {
+  background: var(--input-bg);
+  border: 1.5px solid var(--input-border);
+  border-radius: 12px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.aura-input:focus-within {
+  border-color: var(--blue-primary);
+  box-shadow: 0 0 0 3px rgba(77, 142, 214, 0.14);
+  outline: none;
+}
+
+/* Primary button — solid blue with shadow */
+.aura-btn-primary {
+  background: linear-gradient(135deg, #3A78C4 0%, #4D8ED6 52%, #5AA6E8 100%);
+  color: #ffffff;
+  border-radius: 12px;
+  border: none;
+  box-shadow: var(--shadow-btn), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: filter 0.14s, box-shadow 0.14s, transform 0.10s;
+}
+
+.aura-btn-primary:hover {
+  filter: brightness(1.04);
+  box-shadow: 0 6px 22px rgba(77, 142, 214, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transform: translateY(-1px);
+}
+
+.aura-btn-primary:active {
+  transform: translateY(0);
+  filter: brightness(0.98);
+}
+
+/* Secondary button — white with blue border */
+.aura-btn-secondary {
+  background: #ffffff;
+  color: var(--blue-primary);
+  border: 1.5px solid #C2D9F4;
+  border-radius: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, transform 0.10s;
+}
+
+.aura-btn-secondary:hover {
+  background: var(--blue-light);
+  border-color: var(--blue-primary);
+  transform: translateY(-1px);
+}
+
+/* Sidebar nav items */
+.aura-sidebar-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  color: var(--text-body);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  border: none;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  transition: background 0.13s, color 0.13s;
+}
+
+.aura-sidebar-btn:hover {
+  background: var(--blue-light);
+  color: var(--blue-primary);
+}
+
+/* Carousel center card */
+.rx-card-center {
+  background: #ffffff;
+  border: 2px solid rgba(77, 142, 214, 0.28);
+  border-radius: 14px;
+  box-shadow: 0 3px 16px rgba(77, 142, 214, 0.13);
+}
+
+/* Carousel side cards */
+.rx-card-side {
+  background: #F0F4FC;
+  border: 1px solid #DDE6F5;
+  border-radius: 12px;
+  opacity: 0.60;
+}
+
+/* Modal/overlay backdrop — dark, no blur (clean per reference) */
+.overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 22, 52, 0.42);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Modal panel */
+.overlay-panel {
+  background: #ffffff;
+  border-radius: 24px;
+  box-shadow: var(--shadow-overlay);
+  border: 1px solid #E8EEF8;
+}
+
+/* Time picker */
+.time-picker-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 2.25rem;
+}
+
+.time-value {
+  background: #EEF3FC;
+  border: 1px solid #C6D8EE;
+  border-radius: 8px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #2E5FA8;
+  width: 2.25rem;
+  text-align: center;
+  padding: 0.2rem 0;
+  user-select: none;
+  letter-spacing: 0.02em;
+}
+
+.time-arrow-btn {
+  color: #88A4CC;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.1rem;
+  line-height: 1;
+  transition: color 0.12s;
+}
+
+.time-arrow-btn:hover {
+  color: var(--blue-primary);
+}
+
+/* Legacy aliases — kept so any old references don't break */
+.glass-card   { background:#fff; border-radius:22px; box-shadow:var(--shadow-card); border:1px solid var(--border-card); }
+.glass-nav    { background:#fff; border-bottom:1px solid var(--border-divider); box-shadow:var(--shadow-nav); }
+.glass-panel  { background:#fff; border-radius:22px; box-shadow:var(--shadow-card); border:1px solid var(--border-card); }
+.glass-input  { background:var(--input-bg); border:1.5px solid var(--input-border); border-radius:12px; }

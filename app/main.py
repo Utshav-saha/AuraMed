@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # new created api files import
-from app.api import chatbot, medicines, prescription_scan, search_pharmacy , patient_page , cart
+from app.api import chatbot, medicines, prescription_scan, search_pharmacy , patient_page , cart , auth
 
 
 app = FastAPI(title="AuraMed")
@@ -52,6 +52,12 @@ app.include_router(
     cart.router,
     prefix="/api/v1/cart",
     tags=["Cart Functionalities"]
+)
+
+app.include_router(
+    auth.router,
+    prefix="/api/v1/auth",
+    tags=["Authentication"]
 )
 
 @app.get("/")

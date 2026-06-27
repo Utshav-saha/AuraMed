@@ -55,7 +55,7 @@ async def add_to_cart(request: AddToCartRequest):
     conn = await asyncpg.connect(DATABASE_URL)
     try:
         query = """
-            INSERT INTO cart (medicine_id, count, order_status, assigned_pharmacy, patient_id)
+            INSERT INTO patient_cart (medicine_id, count, order_status, assigned_pharmacy, patient_id)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id
         """
@@ -70,7 +70,7 @@ async def add_to_cart(request: AddToCartRequest):
 async def remove_from_cart(cart_id: int):
     conn = await asyncpg.connect(DATABASE_URL)
     try:
-        query = "DELETE FROM cart WHERE id = $1"
+        query = "DELETE FROM patient_cart WHERE id = $1"
         result = await conn.execute(query, cart_id)
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Cart item not found")
@@ -87,8 +87,8 @@ async def get_cart_items(patient_id: int):
     try:
         query = """
             SELECT c.id AS cart_id, c.medicine_id, c.count, c.order_status, c.patient_id,
-                   p.name AS assigned_pharmacy_name
-            FROM cart c
+                   p.store_name AS assigned_pharmacy_name
+            FROM patient_cart c
             LEFT JOIN pharmacies p ON c.assigned_pharmacy = p.id
             WHERE c.patient_id = $1
         """
@@ -167,7 +167,7 @@ async def checkout_cart(request: CheckoutRequest):
         for detail in assignments:
             await conn.execute(
                 """
-                UPDATE cart
+                UPDATE patient_cart
                 SET assigned_pharmacy = $1, order_status = 'confirmed'
                 WHERE patient_id = $2
                   AND medicine_id = $3
@@ -196,8 +196,8 @@ async def past_orders(patient_id: int):
     try:
         query = """
             SELECT c.id AS cart_id, c.medicine_id, c.count, c.order_status, c.patient_id,
-                   p.name AS assigned_pharmacy_name
-            FROM cart c
+                   p.store_name AS assigned_pharmacy_name
+            FROM patient_cart c
             LEFT JOIN pharmacies p ON c.assigned_pharmacy = p.id
             WHERE c.patient_id = $1 AND c.order_status != 'pending'
         """
