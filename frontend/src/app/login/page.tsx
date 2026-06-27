@@ -7,7 +7,6 @@ import {
   HeartPulse, ShieldCheck, Clock, Sparkles, FastForward,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import GoogleSignInButton from "@/components/GoogleSignInButton";
 
 type Mode = "signin" | "signup";
 
@@ -22,7 +21,7 @@ const PASSWORD_RULES = [
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, register, loginWithGoogle, loginAsGuest, token, ready } = useAuth();
+  const { login, register, loginAsGuest, token, ready } = useAuth();
 
   const [mode, setMode] = useState<Mode>("signin");
   const [name, setName] = useState("");
@@ -71,21 +70,6 @@ export default function LoginPage() {
       setSubmitting(false);
     }
   };
-
-  const handleGoogle = useCallback(
-    async (credential: string) => {
-      setError(null);
-      setSubmitting(true);
-      try {
-        await loginWithGoogle(credential);
-        router.push("/dashboard");
-      } catch (err) {
-        setError(err instanceof Error ? cleanError(err.message) : "Google sign-in failed.");
-        setSubmitting(false);
-      }
-    },
-    [loginWithGoogle, router]
-  );
 
   // placeholder — skip auth and enter the dashboard with a fake account
   const handleBypass = useCallback(() => {
@@ -289,16 +273,6 @@ export default function LoginPage() {
                 : "Create Account"}
             </button>
           </form>
-
-          {/* Divider */}
-          <div className="flex items-center gap-3 my-5">
-            <div className="flex-1 h-px bg-[#E6ECF7]" />
-            <span className="text-[11px] font-medium text-[#9DAABF] uppercase tracking-wider">or</span>
-            <div className="flex-1 h-px bg-[#E6ECF7]" />
-          </div>
-
-          {/* Google */}
-          <GoogleSignInButton onCredential={handleGoogle} onError={setError} />
 
           {/* Footer switch */}
           <p className="text-center text-[12.5px] text-[#6A7898] mt-6">

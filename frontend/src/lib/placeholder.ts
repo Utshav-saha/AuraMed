@@ -1,7 +1,14 @@
 // placeholder — mock search data so results are viewable without a populated backend.
 // Search the codebase for 'placeholder' to find and delete all mock-data code once
 // the real database is seeded.
-import type { MedicineResult, PharmacyNameResult, CartResult, AuthResponse } from "./api";
+import type {
+  MedicineResult,
+  PharmacyNameResult,
+  CartResult,
+  AuthResponse,
+  CartItemRow,
+  Prescription,
+} from "./api";
 
 // placeholder — a fake signed-in account used by the login page's "bypass" button
 // so the dashboard and other pages are usable without a real backend session.
@@ -62,6 +69,52 @@ export function placeholderPharmacyNameSearch(q: string): PharmacyNameResult[] {
   );
   return matches.length > 0 ? matches : PLACEHOLDER_PHARMACIES;
 }
+
+// placeholder — mock cart rows (shape of GET /cart/get_cart_items). The real
+// backend cart row carries no medicine name/price, so the cart page enriches
+// each row via fetchMedicineDetails; here we point at the mock medicine ids.
+export const PLACEHOLDER_CART_ITEMS: CartItemRow[] = [
+  { cart_id: 5001, medicine_id: 9001, count: 2, order_status: "pending", assigned_pharmacy_name: null, patient_id: 1 },
+  { cart_id: 5002, medicine_id: 9004, count: 1, order_status: "pending", assigned_pharmacy_name: null, patient_id: 1 },
+  { cart_id: 5003, medicine_id: 9005, count: 1, order_status: "pending", assigned_pharmacy_name: null, patient_id: 1 },
+];
+
+// placeholder — the backend exposes no price field at all; this is a purely
+// client-side, stable pseudo-price so the order summary renders. Delete once a
+// real pricing source exists.
+export function placeholderPrice(medicineId: number): number {
+  return Math.round((((medicineId * 37) % 90) + 10) * 100) / 100; // 10.00–99.x, stable per id
+}
+
+// placeholder — mock stored prescriptions (shape of GET /get_prescriptions).
+// Backend rows carry doctor_id (no doctor name) and item medicine_id (no names),
+// so consumers enrich names via fetchMedicineDetails and fall back here offline.
+export const PLACEHOLDER_PRESCRIPTIONS: Prescription[] = [
+  {
+    prescription_id: 1,
+    patient_id: 1,
+    doctor_id: 7,
+    prescribed_at: "2026-06-20T10:30:00Z",
+    disease_diagnosis: "Upper Respiratory Infection",
+    location_issued: { latitude: 23.8103, longitude: 90.4125 },
+    items: [
+      { medicine_id: 9001, dosage_instruction: "1+0+1", duration: 5 },
+      { medicine_id: 9004, dosage_instruction: "0+0+1", duration: 7 },
+    ],
+  },
+  {
+    prescription_id: 2,
+    patient_id: 1,
+    doctor_id: 4,
+    prescribed_at: "2026-05-14T09:00:00Z",
+    disease_diagnosis: "Acute Bronchitis",
+    location_issued: { latitude: 23.7806, longitude: 90.4072 },
+    items: [
+      { medicine_id: 9002, dosage_instruction: "1+1+1", duration: 7 },
+      { medicine_id: 9005, dosage_instruction: "1+0+1", duration: 5 },
+    ],
+  },
+];
 
 // placeholder — build a mock CartResult for the location page's nearby search.
 // Each pharmacy "stocks" the requested medicines so result rows + cart overlay render.

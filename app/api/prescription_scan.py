@@ -262,7 +262,7 @@ async def remove_prescription(patient_id: int , id:int):
 
         Query = """
                 delete from prescriptions
-                where patient_id = $1 && id = $2
+                where patient_id = $1 and id = $2
                 """
         
         await conn.execute(Query, patient_id, id)

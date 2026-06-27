@@ -24,7 +24,6 @@ interface AuthContextValue extends AuthState {
   ready: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
-  loginWithGoogle: (credential: string) => Promise<void>;
   loginAsGuest: () => void; // placeholder — bypass login for development
   logout: () => void;
 }
@@ -79,14 +78,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persist]
   );
 
-  const loginWithGoogle = useCallback(
-    async (credential: string) => {
-      const res = await api.googleLogin(credential);
-      persist(res);
-    },
-    [persist]
-  );
-
   // placeholder — sign in with a fake account so the app is usable without a backend
   const loginAsGuest = useCallback(() => {
     persist(PLACEHOLDER_AUTH);
@@ -104,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ ...state, ready, login, register, loginWithGoogle, loginAsGuest, logout }}
+      value={{ ...state, ready, login, register, loginAsGuest, logout }}
     >
       {children}
     </AuthContext.Provider>
