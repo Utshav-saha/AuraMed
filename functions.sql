@@ -71,7 +71,8 @@ CREATE OR REPLACE FUNCTION find_nearby_pharmacy (
   search_radius_meters double precision,
   target_medicine_ids bigint[],
   target_generic_ids bigint[],
-  target_quantities int[] 
+  target_quantities int[],
+  target_dosage_form_ids int[]
 )
 RETURNS TABLE (
   pharmacy_id bigint,
@@ -79,6 +80,7 @@ RETURNS TABLE (
   distance_meters double precision,
   available_medicine_id bigint,
   available_generic_id bigint,
+  available_dosage_form_id bigint,
   stock_count int,
   is_exact_match boolean
 )
@@ -90,40 +92,41 @@ BEGIN
   user_location := ST_SetSRID(ST_MakePoint(user_lng, user_lat), 4326)::geography;
 
   RETURN QUERY
-  -- 2. ZIPPER TRICK: Convert the 3 arrays into a temporary "cart" table
+  -- ZIPPER TRICK: Convert the 4 arrays into a temporary "cart" table
   WITH cart AS (
-    SELECT 
+    SELECT
       unnest(target_medicine_ids) AS req_med_id,
       unnest(target_generic_ids) AS req_gen_id,
-      unnest(target_quantities) AS req_qty
+      unnest(target_quantities) AS req_qty,
+      unnest(target_dosage_form_ids) AS req_dosage_form_id
   )
-  
-  SELECT 
+
+  SELECT
     p.id AS pharmacy_id,
     p.store_name AS pharmacy_name,
     ST_Distance(p.coordinates, user_location) AS distance_meters,
     pi.medicine_id AS available_medicine_id,
     m.generic_id AS available_generic_id,
+    m.dosage_form_id AS available_dosage_form_id,
     pi.stock_count,
     (pi.medicine_id = c.req_med_id) AS is_exact_match
   FROM public.pharmacies p
   JOIN public.pharmacy_inventory pi ON p.id = pi.pharmacy_id
   JOIN public.medicines m ON pi.medicine_id = m.id
-  JOIN cart c ON (pi.medicine_id = c.req_med_id OR m.generic_id = c.req_gen_id)
-  
-  WHERE 
-    -- 4. THE CRITICAL CHECK: Does the shelf have enough to fulfill the cart?
+  JOIN cart c ON (
+    pi.medicine_id = c.req_med_id
+    OR (m.generic_id = c.req_gen_id AND m.dosage_form_id = c.req_dosage_form_id)
+  )
+
+  WHERE
     pi.stock_count >= c.req_qty
-    
-    AND pi.is_recalled = false 
+    AND pi.is_recalled = false
     AND pi.expiry_date >= CURRENT_DATE
     AND ST_DWithin(p.coordinates, user_location, search_radius_meters)
-  ORDER BY 
+  ORDER BY
     distance_meters ASC;
 END;
 $$;
-
-
 
 
 CREATE OR REPLACE FUNCTION match_leaflets (
@@ -201,10 +204,6 @@ BEGIN
         'Authorization', 'Bearer ' || resend_api_key
       )
     );
-
-    UPDATE public.patient_reminders 
-    SET status = 'sent' 
-    WHERE id = reminder.id;
     
   END LOOP;
 END;

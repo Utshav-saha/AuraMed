@@ -16,6 +16,7 @@ class SearchResponse(BaseModel):
     distance_meters: float
     available_medicine_id: int
     available_generic_id: int
+    available_dosage_form_id: int
     stock_count: int
     is_exact_match: bool
 
@@ -26,6 +27,7 @@ class SearchRequest(BaseModel):
     user_lng: float
     search_radius_meters: Optional[float] = 5000.0
     target_medicine_ids: list[int]
+    target_dosage_forms: list[int]
     target_quantities: list[int]
 
 
@@ -73,13 +75,19 @@ class CartResult(BaseModel):
 
 @router.post("/search-pharmacies", response_model=CartResult)
 async def search_pharmacies(request: SearchRequest):
-    conn = await asyncpg.connect(DATABASE_URL)
+    conn = await asyncpg.connect(DATABASE_URL,
+                                 statement_cache_size=0)
     try:
         generic_rows = await conn.fetch(
-            "SELECT generic_id FROM medicines WHERE id = ANY($1)",
+            """
+            SELECT COALESCE(m.generic_id, 0) AS generic_id
+            FROM unnest($1::bigint[]) WITH ORDINALITY AS u(id, ord)
+            LEFT JOIN medicines m ON m.id = u.id
+            ORDER BY u.ord
+            """,
             request.target_medicine_ids,
         )
-        generic_ids_list = [r["generic_id"] for r in generic_rows if r["generic_id"] is not None]
+        generic_ids_list = [r["generic_id"] for r in generic_rows]
 
         response = supabase.rpc("find_nearby_pharmacy", {
             "user_lat": request.user_lat,
@@ -87,6 +95,8 @@ async def search_pharmacies(request: SearchRequest):
             "search_radius_meters": request.search_radius_meters,
             "target_medicine_ids": request.target_medicine_ids,
             "target_generic_ids": generic_ids_list,
+            "target_dosage_form_ids": request.target_dosage_forms,
+            "target_quantities": request.target_quantities,
         }).execute()
 
         data = response.data

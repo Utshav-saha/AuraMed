@@ -271,3 +271,22 @@ async def remove_prescription(patient_id: int , id:int):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         await conn.close()
+
+
+@router.post("/edit_prescription")
+async def edit_prescription(patient_id: int, id: int, updated_data: dict):
+    conn = await asyncpg.connect(DATABASE_URL)
+    try:
+        query = """
+            UPDATE prescriptions
+            SET 
+                doctor_id = $3,
+                doctor_name = $4,
+                disease_diagnosis = $5
+            WHERE patient_id = $1 AND id = $2
+        """
+        await conn.execute(query, patient_id, id, updated_data.get("doctor_id"), updated_data.get("doctor_name"), updated_data.get("disease_diagnosis"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await conn.close()

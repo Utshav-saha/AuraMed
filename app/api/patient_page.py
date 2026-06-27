@@ -161,4 +161,20 @@ async def calculate_dosage(request: DosageCalculationRequest):
     
     return DosageCalculationResponse(total_dosages=response_list)
 
-@router.post("/notification")
+@router.post("/send_notification")
+async def send_notification(request: NotificationRequest):
+    try:
+        # Insert the notification into the database
+        response = supabase.table("notifications").insert({
+            "patient_email": request.patient_email,
+            "medicine_name": request.medicine_name,
+            "schedule_time": request.schedule_time.isoformat(),
+            "status": request.status
+        }).execute()
+
+        if response.status_code != 201:
+            raise HTTPException(status_code=500, detail="Failed to insert notification into the database")
+
+        return {"message": "Notification scheduled successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
