@@ -47,6 +47,13 @@ class DosageCalculationResponse(BaseModel):
     total_dosages: List[TotalDosage]
 
 
+class NotificationRequest(BaseModel):
+    patient_email: str
+    medicine_name: str
+    schedule_time: datetime
+    status: str = "pending"  # Default status is "pending"
+
+
 
 @router.get("/get_patient", response_model=PatientResponse)
 async def get_patient(user_id: int):
@@ -154,3 +161,4 @@ async def calculate_dosage(request: DosageCalculationRequest):
     
     return DosageCalculationResponse(total_dosages=response_list)
 
+@router.post("/notification")
