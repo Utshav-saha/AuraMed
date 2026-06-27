@@ -108,7 +108,7 @@ function TimePicker({ slot, onChange }: { slot: TimeSlot; onChange: (s: TimeSlot
 // ── Main Page ──────────────────────────────────────────────────
 export default function DashboardPage() {
   const router = useRouter();
-  const { logout, patient } = useRequireAuth();
+  const { logout, patient, user } = useRequireAuth();
   const patientId = patient?.id ?? 1; // placeholder fallback for guest mode
   const displayName = patient?.name ?? "there";
   const firstName = displayName.split(" ")[0];
@@ -121,6 +121,7 @@ export default function DashboardPage() {
   const [reminderOpen, setReminderOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{ key: string; slotIdx: number } | null>(null);
   const [timeSlots, setTimeSlots] = useState<Record<string, TimeSlot[]>>({});
+  const [savingReminders, setSavingReminders] = useState(false);
 
   // Scan flows
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -139,9 +140,8 @@ export default function DashboardPage() {
         .map((p) => ({
           id: p.prescription_id,
           date: p.prescribed_at,
-          // get_prescriptions returns doctor_id only — no name/specialization
-          doctorName: `Doctor #${p.doctor_id}`,
-          specialization: "Prescribing physician",
+          doctorName: `Doctor #${p.doctor_id}`, // Needs API update to provide actual name
+          specialization: "Prescribing physician", // Needs API update to provide actual specialization
           diagnosis: p.disease_diagnosis,
           items: p.items.map((it) => ({
             brandName: it.brand_name,
@@ -150,7 +150,7 @@ export default function DashboardPage() {
             durationDays: it.duration,
           })),
         }))
-        .sort((a, b) => +new Date(b.date) - +new Date(a.date)); // most recent first
+        .sort((a, b) => +new Date(b.date) - +new Date(a.date));
       setPrescriptions(adapted);
       setTimeSlots(initSlots(adapted));
       setCurrentIndex((i) => Math.min(i, Math.max(0, adapted.length - 1)));
@@ -159,7 +159,6 @@ export default function DashboardPage() {
     }
   }, [patientId]);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data load
   useEffect(() => { reloadPrescriptions(); }, [reloadPrescriptions]);
 
   const submitSearch = () => {
@@ -167,10 +166,10 @@ export default function DashboardPage() {
     if (q.length > 0) router.push(`/medicines?q=${encodeURIComponent(q)}`);
   };
 
-  // ── Scan Prescription (Gemini OCR upload) ──────────────────
+  // ── Network Calls ───────────────────────────────────────────
   const onScanFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file
+    e.target.value = "";
     if (!file) return;
     setScanState("scanning");
     setScanMessage("Reading your prescription…");
@@ -190,7 +189,6 @@ export default function DashboardPage() {
     }
   };
 
-  // ── Scan QR (link an existing prescription by id) ──────────
   const submitQr = async () => {
     const id = parseInt(qrId, 10);
     if (Number.isNaN(id)) { setQrError("Enter a valid prescription ID."); return; }
@@ -208,6 +206,68 @@ export default function DashboardPage() {
       setQrBusy(false);
     }
   };
+
+  const handleSaveReminders = async () => {
+    if (!rx) return;
+    setSavingReminders(true);
+    
+    // Ensure we have an email to send to, fallback required by the API
+    const userEmail = user?.email || "patient@example.com";
+
+    try {
+      const promises = [];
+      const now = new Date();
+
+      for (let i = 0; i < rx.items.length; i++) {
+        const item = rx.items[i];
+        const key = slotKey(i);
+        const slots = timeSlots[key] || [];
+
+        for (const slot of slots) {
+          // Convert 12hr slot to 24hr format
+          let hour24 = slot.hour;
+          if (slot.ampm === "PM" && hour24 !== 12) hour24 += 12;
+          if (slot.ampm === "AM" && hour24 === 12) hour24 = 0;
+
+          // Loop through the duration days to schedule daily reminders
+          for (let dayOffset = 0; dayOffset < item.durationDays; dayOffset++) {
+            const scheduleDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, hour24, slot.minute, 0);
+            
+            // Skip scheduling if the time has already passed today
+            if (scheduleDate <= now) continue;
+
+            // Push the request to the array
+            promises.push(
+              fetch("http://localhost:8000/api/v1/patient_page/send_notification", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  // Include Authorization if your backend requires it for this endpoint
+                  // "Authorization": `Bearer ${localStorage.getItem("access_token")}` 
+                },
+                body: JSON.stringify({
+                  patient_email: userEmail,
+                  medicine_name: item.brandName,
+                  schedule_time: scheduleDate.toISOString(),
+                  status: "pending"
+                })
+              })
+            );
+          }
+        }
+      }
+
+      await Promise.all(promises);
+      setReminderOpen(false);
+      
+    } catch (error) {
+      console.error("Failed to save reminders", error);
+      alert("Failed to schedule some reminders. Please try again.");
+    } finally {
+      setSavingReminders(false);
+    }
+  };
+
 
   const rx = prescriptions[currentIndex];
   const canGoLeft = currentIndex > 0;
@@ -242,7 +302,7 @@ export default function DashboardPage() {
       {/* ── Top Nav ────────────────────────────────────────── */}
       <header className="bg-white border-b border-[#E6ECF7] shadow-[0_1px_12px_rgba(140,158,205,0.09)] flex items-center justify-between px-6 py-3 shrink-0 z-10">
         <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#5AA6E8] to-[#3A78C4] flex items-center justify-center shadow-sm shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-linear-to-br from-[#5AA6E8] to-[#3A78C4] flex items-center justify-center shadow-sm shrink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
               <path d="M12 21C12 21 3 14 3 8.5C3 5.46 5.46 3 8.5 3C10.24 3 11.91 3.81 13 5.08C14.09 3.81 15.76 3 17.5 3C20.54 3 23 5.46 23 8.5C23 14 12 21 12 21Z" fill="white" />
             </svg>
@@ -264,7 +324,7 @@ export default function DashboardPage() {
           >
             <LogOut size={17} />
           </button>
-          <div title={displayName} className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-300 to-amber-500 flex items-center justify-center text-white text-sm font-semibold">{avatarInitial}</div>
+          <div title={displayName} className="w-9 h-9 rounded-full bg-linear-to-br from-amber-300 to-amber-500 flex items-center justify-center text-white text-sm font-semibold">{avatarInitial}</div>
         </div>
       </header>
 
@@ -272,7 +332,7 @@ export default function DashboardPage() {
       <div className="flex flex-1 gap-4 p-4 overflow-hidden">
 
         {/* ── Left Sidebar ────────────────────────────────── */}
-        <aside className="bg-white rounded-[22px] shadow-[0_2px_20px_rgba(140,158,205,0.11),0_1px_4px_rgba(140,158,205,0.06)] border border-[rgba(215,225,245,0.70)] w-[196px] shrink-0 flex flex-col gap-1.5 p-3">
+        <aside className="bg-white rounded-[22px] shadow-[0_2px_20px_rgba(140,158,205,0.11),0_1px_4px_rgba(140,158,205,0.06)] border border-[rgba(215,225,245,0.70)] w-49 shrink-0 flex flex-col gap-1.5 p-3">
           {NAV_ITEMS.map(({ icon: Icon, label, href, active }) => (
             <a
               key={label}
@@ -321,7 +381,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Right: carousel */}
-            <div className="shrink-0 w-[420px]">
+            <div className="shrink-0 w-105">
               <p className="text-[13px] font-semibold text-[#1B2A4A] mb-2.5">My Prescriptions</p>
               <div className="flex items-center gap-2.5">
 
@@ -407,7 +467,7 @@ export default function DashboardPage() {
                   <ScanLine size={24} className="text-[#B8D4F5]" />
                 </div>
                 <p className="text-[14px] font-semibold text-[#1B2A4A]">No prescriptions yet</p>
-                <p className="text-[12px] text-[#9DAABF] max-w-[280px] leading-relaxed">
+                <p className="text-[12px] text-[#9DAABF] max-w-70 leading-relaxed">
                   Scan a prescription or link one via QR to see it here.
                 </p>
               </div>
@@ -524,7 +584,7 @@ export default function DashboardPage() {
       {reminderOpen && rx && (
         <div
           className="overlay-backdrop"
-          onClick={(e) => { if (e.target === e.currentTarget) setReminderOpen(false); }}
+          onClick={(e) => { if (e.target === e.currentTarget && !savingReminders) setReminderOpen(false); }}
         >
           <div
             className="overlay-panel w-full max-w-lg mx-4 flex flex-col"
@@ -537,7 +597,7 @@ export default function DashboardPage() {
                 <p className="text-[12px] text-[#9DAABF] mt-0.5">{rx.diagnosis} · {formatDate(rx.date)}</p>
               </div>
               <button
-                onClick={() => setReminderOpen(false)}
+                onClick={() => !savingReminders && setReminderOpen(false)}
                 className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-[#F3F5FB] text-[#9DAABF] hover:text-[#6A7898] transition-colors"
               >
                 <X size={16} />
@@ -599,10 +659,12 @@ export default function DashboardPage() {
             {/* Overlay footer */}
             <div className="px-6 py-4 shrink-0 border-t border-[#E6ECF7]">
               <button
-                onClick={() => setReminderOpen(false)}
-                className="aura-btn-primary w-full py-3 text-[13px] font-semibold"
+                onClick={handleSaveReminders}
+                disabled={savingReminders}
+                className="aura-btn-primary w-full py-3 text-[13px] font-semibold flex items-center justify-center gap-2 disabled:opacity-70"
               >
-                Save Reminders
+                {savingReminders && <Loader2 size={16} className="animate-spin" />}
+                {savingReminders ? "Scheduling..." : "Save Reminders"}
               </button>
             </div>
           </div>
@@ -665,7 +727,7 @@ export default function DashboardPage() {
                 <AlertTriangle size={22} className="text-[#D94F4F]" />
               </div>
               <h3 className="text-[15px] font-semibold text-[#1B2A4A]">Delete time slot?</h3>
-              <p className="text-[12px] text-[#9DAABF] leading-relaxed max-w-[220px]">
+              <p className="text-[12px] text-[#9DAABF] leading-relaxed max-w-55">
                 This reminder time will be permanently removed.
               </p>
               <div className="flex gap-3 w-full mt-1">

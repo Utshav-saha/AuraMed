@@ -1,152 +1,179 @@
 # AuraMed API Reference
 
-Base URL: `http://<host>/api/v1`
+Base URL: `http://localhost:8000`
 
-All endpoints return JSON unless noted. Errors follow `{ "detail": "<message>" }`.
+All endpoints are prefixed with `/api/v1`.
 
 ---
 
-## Medicines Search Engine `/api/v1/medicines`
+## Authentication — `/api/v1/auth`
 
-### `GET /search-medicines`
+### POST `/register`
+Register a new patient account.
 
-Semantic search for medicines. Accepts a medicine name **or** a symptom description. Gemini classifies the query, then a vector similarity search runs against the medicine database.
+**Request body**
+```json
+{
+  "name": "string (min 2 chars)",
+  "email": "string",
+  "password": "string (min 8 chars, upper, lower, digit, special)"
+}
+```
 
-**Query parameters**
+**Response `200`**
+```json
+{
+  "access_token": "string",
+  "token_type": "bearer",
+  "user": { "id": "string", "email": "string", "role": "string" },
+  "patient": { "id": 1, "name": "string" }
+}
+```
 
-| Param   | Type | Required | Default | Description                        |
-|---------|------|----------|---------|------------------------------------|
-| `q`     | str  | yes      | —       | Medicine name or symptom/condition |
-| `limit` | int  | no       | `10`    | Max results (1–50)                 |
+**Errors** `409` email already exists · `422` validation failure
 
-**Response** `200 application/json` — array of:
+---
 
+### POST `/login`
+Login with email and password.
+
+**Request body**
+```json
+{ "email": "string", "password": "string" }
+```
+
+**Response `200`** — same shape as `/register`
+
+**Errors** `401` invalid credentials
+
+---
+
+### GET `/me`
+Return the currently authenticated user. Requires `Authorization: Bearer <token>`.
+
+**Response `200`** — same shape as `/register`
+
+**Errors** `401` missing/expired token
+
+---
+
+## Medicines — `/api/v1/medicines`
+
+### GET `/search-medicines`
+AI-powered medicine search by name or symptom. Gemini classifies the query then routes to the appropriate vector-search function.
+
+**Query params**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `q` | string | required | Medicine name or symptom description |
+| `limit` | int | 10 | Max results (1–50) |
+
+**Response `200`**
 ```json
 [
   {
-    "medicine_id": 42,
+    "medicine_id": 1,
     "brand_name": "Napa",
     "strength": "500mg",
     "manufacturer_name": "Beximco",
     "generic_name": "Paracetamol",
-    "similarity": 0.91
+    "similarity": 0.87
   }
 ]
 ```
 
-**Logic**
-- Query type `NAME` → `match_medicines_by_name` RPC, threshold 0.60
-- Query type `SYMPTOM` → `match_medicines_by_symptom` RPC, threshold 0.45
-
 ---
 
-### `GET /fetch_medicine_details`
+### GET `/fetch_medicine_details`
+Full details for a single medicine, including leaflet information.
 
-Full clinical leaflet data for a single medicine.
+**Query params**
 
-**Query parameters**
+| Param | Type | Description |
+|-------|------|-------------|
+| `medicine_id` | int | Medicine ID |
 
-| Param         | Type | Required | Description    |
-|---------------|------|----------|----------------|
-| `medicine_id` | int  | yes      | Medicine row ID |
-
-**Response** `200 application/json`
-
+**Response `200`**
 ```json
 {
-  "id": 42,
-  "brand_name": "Napa",
-  "drug_type": "Tablet",
-  "slug": "napa-500mg",
-  "strength": "500mg",
-  "package_container": "Box",
-  "package_size": "10x10",
-  "manufacturer_name": "Beximco",
-  "dosage_form": "Tablet",
-  "generic_name": "Paracetamol",
-  "indication_name": "Pain & Fever",
-  "indication_description": "...",
-  "therapeutic_class_description": "...",
-  "pharmacology_description": "...",
-  "dosage_description": "...",
-  "administration_description": "...",
-  "interaction_description": "...",
-  "contraindications_description": "...",
-  "side_effects_description": "...",
-  "pregnancy_and_lactation_description": "...",
-  "precautions_description": "...",
-  "pediatric_usage_description": "...",
-  "overdose_effects_description": "...",
-  "duration_of_treatment_description": "...",
-  "reconstitution_description": "...",
-  "storage_conditions_description": "..."
+  "id": 1,
+  "brand_name": "string",
+  "drug_type": "string",
+  "slug": "string",
+  "strength": "string",
+  "package_container": "string",
+  "package_size": "string",
+  "manufacturer_name": "string",
+  "dosage_form": "string",
+  "generic_name": "string",
+  "indication_name": "string",
+  "indication_description": "string",
+  "therapeutic_class_description": "string",
+  "pharmacology_description": "string",
+  "dosage_description": "string",
+  "administration_description": "string",
+  "interaction_description": "string",
+  "contraindications_description": "string",
+  "side_effects_description": "string",
+  "pregnancy_and_lactation_description": "string",
+  "precautions_description": "string",
+  "pediatric_usage_description": "string",
+  "overdose_effects_description": "string",
+  "duration_of_treatment_description": "string",
+  "reconstitution_description": "string",
+  "storage_conditions_description": "string"
 }
 ```
 
-**Errors** `404` medicine not found.
+**Errors** `404` medicine not found
 
 ---
 
-## Pharmacy Search Engine `/api/v1/pharmacies`
+## Pharmacy Search — `/api/v1/pharmacies`
 
-### `POST /search-pharmacies`
+### POST `/search-pharmacies`
+Find pharmacies near the user that stock the requested medicines. Generic substitutes are allowed only when the dosage form matches (e.g. a tablet prescription will not be fulfilled by a suppository).
 
-Finds nearby pharmacies that stock the requested medicines. Returns two routing strategies: one-stop shops and an optimal multi-stop route.
+Returns three result sets: one-stop options, a multi-stop route, and partial matches.
 
 **Request body**
-
 ```json
 {
   "user_lat": 23.8103,
   "user_lng": 90.4125,
   "search_radius_meters": 5000.0,
-  "target_medicine_ids": [42, 87],
-  "target_quantities": [2, 1]
+  "target_medicine_ids": [101, 202],
+  "target_dosage_forms": [1, 1],
+  "target_quantities": [10, 20]
 }
 ```
 
-| Field                   | Type        | Required | Default  | Description                           |
-|-------------------------|-------------|----------|----------|---------------------------------------|
-| `user_lat`              | float       | yes      | —        | User latitude                         |
-| `user_lng`              | float       | yes      | —        | User longitude                        |
-| `search_radius_meters`  | float       | no       | `5000.0` | Search radius                         |
-| `target_medicine_ids`   | int[]       | yes      | —        | Medicine IDs to look for              |
-| `target_quantities`     | int[]       | yes      | —        | Corresponding quantities needed       |
+> `target_medicine_ids`, `target_dosage_forms`, and `target_quantities` are parallel arrays — index `i` in each array describes the same cart item.
 
-**Response** `200 application/json`
-
+**Response `200`**
 ```json
 {
   "one_stop_options": [
     {
-      "pharmacy_id": 12,
-      "pharmacy_name": "HealthPlus",
+      "pharmacy_id": 5,
+      "pharmacy_name": "ABC Pharmacy",
       "distance_meters": 320.5,
       "items": [
-        { "provided_medicine_id": 42, "is_exact": true, "stock_count": 25 },
-        { "provided_medicine_id": 87, "is_exact": false, "stock_count": 8 }
+        { "provided_medicine_id": 101, "is_exact": true, "stock_count": 50 }
       ]
     }
   ],
   "multi_stop_route": [
-    {
-      "medicine_id": 42,
-      "pharmacy_name": "HealthPlus",
-      "distance_meters": 320.5
-    },
-    {
-      "medicine_id": 87,
-      "pharmacy_name": "MediCare",
-      "distance_meters": 870.0
-    }
+    { "medicine_id": 202, "pharmacy_name": "XYZ Pharmacy", "distance_meters": 800.0 }
   ],
   "partial_matches": [
     {
-      "pharmacy_id": 12,
-      "pharmacy_name": "HealthPlus",
-      "distance_meters": 320.5,
+      "pharmacy_id": 9,
+      "pharmacy_name": "DEF Pharmacy",
+      "distance_meters": 450.0,
       "available_medicines": [
-        { "medicine_id": 42, "stock_count": 25, "is_exact": true }
+        { "medicine_id": 101, "stock_count": 20, "is_exact": true }
       ],
       "medicine_count": 1
     }
@@ -154,352 +181,299 @@ Finds nearby pharmacies that stock the requested medicines. Returns two routing 
 }
 ```
 
-**Logic**
-- Resolves generic IDs for all medicine IDs to allow generic substitutions.
-- Calls `find_nearby_pharmacy` Supabase RPC once, then partitions the rows three ways.
-- `one_stop_options`: pharmacies covering **all** requested generics, sorted by distance (top 5).
-- `multi_stop_route`: for each medicine, the closest pharmacy with an **exact** match.
-- `partial_matches`: every pharmacy stocking **≥1** requested medicine, sorted by coverage then distance (top 5). Drives the "find the most" pharmacy view.
-- `is_exact: false` means the pharmacy stocks a generic equivalent instead of the exact brand.
-
 ---
 
-### `GET /search-by-name`
+### GET `/search-by-name`
+Autocomplete pharmacy names.
 
-Typeahead lookup of pharmacies by store name (case-insensitive `ILIKE` match).
+**Query params**
 
-**Query parameters**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `q` | string | required | Partial pharmacy name |
+| `limit` | int | 5 | Max results |
 
-| Param   | Type | Required | Default | Description              |
-|---------|------|----------|---------|--------------------------|
-| `q`     | str  | yes      | —       | Partial pharmacy name    |
-| `limit` | int  | no       | `5`     | Max results              |
-
-**Response** `200 application/json` — array of:
-
+**Response `200`**
 ```json
-[
-  { "pharmacy_id": 12, "pharmacy_name": "HealthPlus" }
-]
+[{ "pharmacy_id": 1, "pharmacy_name": "ABC Pharmacy" }]
 ```
 
 ---
 
-## Drug Safety Chatbot `/api/v1/chat`
+## Drug Safety Chatbot — `/api/v1/chat`
 
-### `POST /chatbot`
-
-Answers drug safety questions grounded strictly in the official drug leaflet. Returns a **Server-Sent Events (SSE)** stream.
+### POST `/chatbot`
+Ask a clinical question about a drug. Answers are grounded strictly in the official drug leaflet (retrieved via vector search). Returns a streaming Server-Sent Events (SSE) response.
 
 **Request body**
-
 ```json
 {
   "user_question": "Can I take this with alcohol?",
-  "generic_id": 5
+  "generic_id": 42
 }
 ```
 
-| Field           | Type | Required | Description                                           |
-|-----------------|------|----------|-------------------------------------------------------|
-| `user_question` | str  | yes      | The question to ask                                   |
-| `generic_id`    | int  | no       | Narrows context to a specific generic drug's leaflet  |
+> Set `generic_id` to `0` or omit it to search across all leaflets.
 
-**Response** `200 text/event-stream`
-
-Each chunk is an SSE line, streamed token-by-token as Gemini produces them:
-
+**Response** `text/event-stream` — SSE chunks, each line in the form:
 ```
-data: Based on the official leaflet, alcohol is contraindicated...
-
-data:  Consult your physician before combining.
-
+data: <text fragment>
 ```
-
-The stream simply ends when generation completes — there is **no** `[DONE]` sentinel; clients should treat the closed connection as completion. On a server-side failure the final chunk is `data: [ERROR: <message>]`.
-
-If no relevant context is found, the stream returns:
-```
-data: I am sorry, but I cannot find that information in the official drug specifications.
-```
-
-**Logic**
-- Embeds the question and runs `match_leaflets` RPC (threshold 0.4, top-1 chunk).
-- Passes the retrieved leaflet chunk as context to Gemini (`gemini-2.5-flash`) with strict grounding instructions.
-- Streams the response token-by-token.
 
 ---
 
-## Prescription Functionalities `/api/v1/prescriptions`
+## Prescriptions — `/api/v1/prescriptions`
 
-### `POST /scan`
-
-Uploads a prescription image, runs Gemini Vision OCR, resolves the doctor, matches medicines, and persists the full prescription.
+### POST `/scan`
+Upload a prescription image. Gemini Vision extracts medicines, doctor info, and diagnosis; each medicine is matched to the database by name embedding. Saves a `prescriptions` record and `prescription_items`.
 
 **Request** `multipart/form-data`
 
-| Field        | Type   | Required | Description                             |
-|--------------|--------|----------|-----------------------------------------|
-| `file`       | image  | yes      | JPEG / PNG / WEBP prescription image    |
-| `patient_id` | int    | no       | Query param — patient to link to        |
+| Field | Type | Description |
+|-------|------|-------------|
+| `file` | image (JPEG/PNG/WEBP) | Prescription photo |
+| `patient_id` | int (query param, optional) | Patient to associate the prescription with |
 
-**Response** `200 application/json`
-
+**Response `200`**
 ```json
 {
-  "prescription_id": 101,
-  "doctor_id": 7,
-  "doctor_name": "Dr. Rahim",
-  "disease_diagnosis": "Upper Respiratory Tract Infection",
-  "raw_ocr_text": "Dr. Rahim MBBS...",
+  "prescription_id": 1,
+  "doctor_id": 3,
+  "doctor_name": "Dr. Rahman",
+  "disease_diagnosis": "Hypertension",
+  "raw_ocr_text": "...",
   "items": [
     {
-      "medicine_id": 42,
+      "medicine_id": 101,
       "brand_name": "Napa",
       "generic_name": "Paracetamol",
       "dosage_instruction": "1+0+1",
-      "duration_days": 5,
-      "similarity": 0.88
+      "duration_days": 7,
+      "similarity": 0.91
     }
   ]
 }
 ```
 
-**Pipeline**
-1. Preprocess image → RGB JPEG, max 2048px via Pillow.
-2. Gemini Vision extracts: `doctor_name`, `doctor_specialization`, `disease_diagnosis`, `raw_ocr_text`, medicine list with dosage (`morning+noon+night` format) and duration in days.
-3. Doctor lookup by case-insensitive name → insert new row if not found.
-4. Insert `prescriptions` row.
-5. For each medicine: embed name → `match_medicines_by_name` RPC (threshold 0.60). Unmatched medicines are inserted with `medicine_id = null`.
-6. Bulk insert `prescription_items`.
-
-**Errors** `400` non-image file · `422` corrupt image · `502` Gemini or DB failure.
+**Errors** `400` not an image · `422` image preprocessing failed · `502` Gemini/DB error
 
 ---
 
-### `POST /add_prescription_from_qr`
+### POST `/add_prescription_from_qr`
+Link an existing prescription (scanned by a doctor) to a patient via QR code.
 
-Links an existing prescription to a patient (e.g. after scanning a QR code).
+**Query params**
 
-**Query parameters**
+| Param | Type | Description |
+|-------|------|-------------|
+| `patient_id` | int | Patient to assign |
+| `id` | int | Prescription ID from QR |
 
-| Param        | Type | Required | Description          |
-|--------------|------|----------|----------------------|
-| `patient_id` | int  | yes      | Patient to assign to |
-| `id`         | int  | yes      | Prescription row ID  |
-
-**Response** `200 application/json` — empty on success.
-
----
-
-### `POST /remove_prescription`
-
-Removes a prescription record for a patient.
-
-**Query parameters**
-
-| Param        | Type | Required | Description         |
-|--------------|------|----------|---------------------|
-| `patient_id` | int  | yes      | Owning patient ID   |
-| `id`         | int  | yes      | Prescription row ID |
-
-**Response** `200 application/json` — empty on success.
+**Response `200`** `{}`
 
 ---
 
-## Patient Page `/api/v1/patient_page`
+### POST `/remove_prescription`
+Unlink a prescription from a patient.
 
-### `GET /get_patient`
+**Query params**
 
-Fetches a patient's profile including their home location.
+| Param | Type | Description |
+|-------|------|-------------|
+| `patient_id` | int | Patient ID |
+| `id` | int | Prescription ID |
 
-**Query parameters**
+**Response `200`** `{}`
 
-| Param     | Type | Required | Description       |
-|-----------|------|----------|-------------------|
-| `user_id` | int  | yes      | Auth user ID      |
+---
 
-**Response** `200 application/json`
+### POST `/edit_prescription`
+Update doctor and diagnosis on a prescription.
 
+**Query params** `patient_id`, `id`
+
+**Request body**
 ```json
 {
-  "patient_id": 3,
-  "name": "Utshav Saha",
-  "email": "utshav@example.com",
-  "user_id": 9,
-  "home_location": {
-    "latitude": 23.8103,
-    "longitude": 90.4125
-  }
+  "doctor_id": 3,
+  "doctor_name": "Dr. Rahman",
+  "disease_diagnosis": "Updated diagnosis"
 }
 ```
 
-**Errors** `404` patient not found.
+**Response `200`** `{}`
 
 ---
 
-### `GET /get_prescriptions`
+## Patient Page — `/api/v1/patient_page`
 
-Returns all prescriptions for a patient with their line items.
+### GET `/get_patient`
+Fetch patient profile including home location.
 
-**Query parameters**
+**Query params**
 
-| Param        | Type | Required | Description   |
-|--------------|------|----------|---------------|
-| `patient_id` | int  | yes      | Patient row ID |
+| Param | Type | Description |
+|-------|------|-------------|
+| `user_id` | int | User ID (from auth token payload) |
 
-**Response** `200 application/json` — array of:
+**Response `200`**
+```json
+{
+  "patient_id": 1,
+  "name": "John Doe",
+  "email": "john@example.com",
+  "user_id": 10,
+  "home_location": { "latitude": 23.81, "longitude": 90.41 }
+}
+```
 
+**Errors** `404` patient not found
+
+---
+
+### GET `/get_prescriptions`
+All prescriptions for a patient, with their items.
+
+**Query params**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `patient_id` | int | Patient ID |
+
+**Response `200`**
 ```json
 [
   {
-    "prescription_id": 101,
-    "patient_id": 3,
-    "doctor_id": 7,
-    "prescribed_at": "2026-06-20T10:30:00Z",
-    "disease_diagnosis": "URTI",
+    "prescription_id": 1,
+    "patient_id": 1,
+    "doctor_id": 3,
+    "prescribed_at": "2024-01-01T10:00:00Z",
+    "disease_diagnosis": "Fever",
     "location_issued": { "latitude": 23.81, "longitude": 90.41 },
     "items": [
-      {
-        "medicine_id": 42,
-        "dosage_instruction": "1+0+1",
-        "duration": 5
-      }
+      { "medicine_id": 101, "dosage_instruction": "1+1+1", "duration": 5 }
     ]
   }
 ]
 ```
 
-**Errors** `404` no prescriptions found.
+**Errors** `404` no prescriptions found
 
 ---
 
-### `POST /calculate_dosage`
-
-Calculates the total number of units needed for each medicine across all prescription items.
+### POST `/calculate_dosage`
+Compute total pills/doses needed for each medicine from a list of prescription items.
 
 **Request body**
-
 ```json
 {
   "items": [
-    { "medicine_id": 42, "dosage_instruction": "1+0+1", "duration": 5 },
-    { "medicine_id": 42, "dosage_instruction": "0+1+0", "duration": 3 }
+    { "medicine_id": 101, "dosage_instruction": "1+0+1", "duration": 7 }
   ]
 }
 ```
 
-Dosage instruction format: `morning+noon+night` (e.g. `"1+0+1"` = 2 doses/day).
+> `dosage_instruction` format: `morning+noon+night` (e.g. `"1+0+1"` = 2 doses/day).
 
-**Response** `200 application/json`
-
+**Response `200`**
 ```json
 {
   "total_dosages": [
-    { "medicine_id": 42, "total_dosage": 13 }
+    { "medicine_id": 101, "total_dosage": 14 }
   ]
 }
 ```
 
-> Total = sum of `(daily_doses × duration)` per medicine. Multiple items for the same `medicine_id` are accumulated.
-
-**Errors** `400` invalid dosage instruction format.
+**Errors** `400` invalid dosage instruction format
 
 ---
 
-## Cart Functionalities `/api/v1/cart`
-
-### `POST /add_to_cart`
-
-Adds a medicine to the patient's cart.
+### POST `/send_notification`
+Schedule a medicine reminder email for a patient.
 
 **Request body**
-
 ```json
 {
-  "medicine_id": 42,
-  "count": 2,
-  "order_status": "pending",
-  "assigned_pharmacy": null,
-  "patient_id": 3
+  "patient_email": "patient@example.com",
+  "medicine_name": "Napa 500mg",
+  "schedule_time": "2024-01-01T08:00:00Z",
+  "status": "pending"
 }
 ```
 
-| Field               | Type | Required | Default     | Description              |
-|---------------------|------|----------|-------------|--------------------------|
-| `medicine_id`       | int  | yes      | —           |                          |
-| `count`             | int  | yes      | —           | Quantity                 |
-| `order_status`      | str  | no       | `"pending"` |                          |
-| `assigned_pharmacy` | int  | no       | `null`      | Pharmacy ID if pre-known |
-| `patient_id`        | int  | yes      | —           |                          |
-
-**Response** `200 application/json`
-
-```json
-{ "cart_id": 55 }
-```
+**Response `200`** `{ "message": "Notification scheduled successfully" }`
 
 ---
 
-### `POST /remove_from_cart`
+## Cart — `/api/v1/cart`
 
-Deletes a cart item by its ID.
+### POST `/add_to_cart`
+Add a medicine to the patient's cart.
 
-**Query parameters**
-
-| Param     | Type | Required | Description  |
-|-----------|------|----------|--------------|
-| `cart_id` | int  | yes      | Cart row ID  |
-
-**Response** `200 application/json`
-
+**Request body**
 ```json
-{ "message": "Cart item removed successfully" }
+{
+  "medicine_id": 101,
+  "count": 10,
+  "order_status": "pending",
+  "assigned_pharmacy": null,
+  "patient_id": 1
+}
 ```
 
-**Errors** `404` cart item not found.
+**Response `200`** `{ "cart_id": 42 }`
 
 ---
 
-### `GET /get_cart_items`
+### POST `/remove_from_cart`
+Remove an item from the cart.
 
-Lists all `pending` cart items for a patient, with assigned pharmacy name if set.
+**Query params**
 
-**Query parameters**
+| Param | Type | Description |
+|-------|------|-------------|
+| `cart_id` | int | Cart item ID |
 
-| Param        | Type | Required | Description   |
-|--------------|------|----------|---------------|
-| `patient_id` | int  | yes      | Patient row ID |
+**Response `200`** `{ "message": "Cart item removed successfully" }`
 
-**Response** `200 application/json` — array of:
+**Errors** `404` cart item not found
 
+---
+
+### GET `/get_cart_items`
+All current (pending) cart items for a patient.
+
+**Query params**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `patient_id` | int | Patient ID |
+
+**Response `200`**
 ```json
 [
   {
-    "cart_id": 55,
-    "medicine_id": 42,
-    "count": 2,
+    "cart_id": 42,
+    "medicine_id": 101,
+    "count": 10,
     "order_status": "pending",
     "assigned_pharmacy_name": null,
-    "patient_id": 3
+    "patient_id": 1
   }
 ]
 ```
 
 ---
 
-### `POST /checkout`
-
-Assigns the closest pharmacy to each medicine in the cart, then marks them `confirmed`.
+### POST `/checkout`
+Find the nearest pharmacy for each cart item (exact matches only) and confirm the order. Items that cannot be sourced are returned as `unassigned_medicine_ids`.
 
 **Request body**
-
 ```json
 {
-  "patient_id": 3,
+  "patient_id": 1,
   "items": [
-    { "medicine_id": 42, "count": 2 },
-    { "medicine_id": 87, "count": 1 }
+    { "medicine_id": 101, "count": 10 }
   ],
   "user_lat": 23.8103,
   "user_lng": 90.4125,
@@ -507,105 +481,49 @@ Assigns the closest pharmacy to each medicine in the cart, then marks them `conf
 }
 ```
 
-| Field                  | Type    | Required | Default    | Description                     |
-|------------------------|---------|----------|------------|---------------------------------|
-| `patient_id`           | int     | yes      | —          |                                 |
-| `items`                | array   | yes      | —          | Medicines and quantities        |
-| `user_lat`             | float   | yes      | —          | Current user latitude           |
-| `user_lng`             | float   | yes      | —          | Current user longitude          |
-| `search_radius_meters` | float   | no       | `5000.0`   | Search radius                   |
-
-**Response** `200 application/json`
-
+**Response `200`**
 ```json
 {
   "status": "checkout_complete",
   "assignments": [
     {
-      "medicine_id": 42,
-      "pharmacy_id": 12,
-      "pharmacy_name": "HealthPlus",
+      "medicine_id": 101,
+      "pharmacy_id": 5,
+      "pharmacy_name": "ABC Pharmacy",
       "distance_meters": 320.5
     }
   ],
-  "unassigned_medicine_ids": [87]
+  "unassigned_medicine_ids": []
 }
 ```
 
-**Logic**
-1. Resolves generic IDs for all medicines.
-2. Calls `find_nearby_pharmacy` RPC once for all medicines.
-3. Filters to exact matches with sufficient `stock_count`.
-4. Assigns the nearest qualifying pharmacy per medicine (multi-stop strategy).
-5. UPDATEs matching `cart` rows: `assigned_pharmacy`, `order_status = 'confirmed'`.
-6. Any medicine with no qualifying pharmacy appears in `unassigned_medicine_ids`.
+---
+
+### GET `/past_orders`
+All confirmed/completed orders for a patient (status ≠ `pending`).
+
+**Query params**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `patient_id` | int | Patient ID |
+
+**Response `200`** — same shape as `/get_cart_items`
 
 ---
 
-### `GET /past_orders`
-
-Lists all non-pending (confirmed, delivered, etc.) orders for a patient.
-
-**Query parameters**
-
-| Param        | Type | Required | Description   |
-|--------------|------|----------|---------------|
-| `patient_id` | int  | yes      | Patient row ID |
-
-**Response** `200 application/json` — same shape as `/get_cart_items`.
-
----
-
-## Authentication `/api/v1/auth`
-
-JWT-based auth. Tokens are HS256, valid for 7 days. Send authenticated requests with
-`Authorization: Bearer <access_token>`.
-
-Both sign-in endpoints return the same `AuthResponse` shape:
+## Common Error Format
 
 ```json
-{
-  "access_token": "<jwt>",
-  "token_type": "bearer",
-  "user": { "id": "uuid-string", "email": "amanda@auramed.dev", "role": "Patient" },
-  "patient": { "id": 3, "name": "Amanda Sterling" }
-}
+{ "detail": "Human-readable error message" }
 ```
 
-> `user.id` is a **string** (UUID). `patient` is `null` if the user has no linked patient row.
-
-### `POST /register`
-
-**Request body**
-
-| Field      | Type | Required | Description                                                       |
-|------------|------|----------|-------------------------------------------------------------------|
-| `name`     | str  | yes      | ≥ 2 chars                                                         |
-| `email`    | str  | yes      | Valid email; must be unique                                       |
-| `password` | str  | yes      | ≥ 8 chars, with upper, lower, number, and special character       |
-
-Creates a `users` row (role `Patient`) plus a linked `patients` row, then returns `AuthResponse`.
-
-**Errors** `409` email already registered · `422` validation failure.
-
-### `POST /login`
-
-**Request body**: `{ "email": str, "password": str }` → `AuthResponse`.
-
-**Errors** `401` invalid email or password.
-
-### `GET /me`
-
-Returns the current `AuthResponse` for the bearer token. Requires `Authorization` header.
-
-**Errors** `401` missing/expired/invalid token · `404` user not found.
-
----
-
-## Health Check
-
-### `GET /`
-
-```json
-{ "status": "healthy", "service": "AuraMed Backend Entry" }
-```
+| Code | Meaning |
+|------|---------|
+| 400 | Bad request / validation error |
+| 401 | Unauthenticated |
+| 404 | Resource not found |
+| 409 | Conflict (e.g. duplicate email) |
+| 422 | Unprocessable entity |
+| 500 | Internal server error |
+| 502 | Upstream service error (Gemini / Supabase) |

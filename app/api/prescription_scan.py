@@ -76,7 +76,8 @@ def _extract_prescription_data(image_bytes: bytes, mime_type: str) -> Prescripti
         "5. medicines: A list of prescribed medicines, each with:\n"
         "   - name: The medicine name as written (brand or generic).\n"
         "   - dosage_instruction: Full dosage directions in dosage_morning + dosage_noon + dosage_night format (eg, 1+0+1).\n"
-        "   - duration_days: Duration as an integer number of days (estimate 7 if unclear).\n"
+        "   - duration_days: Duration as an integer number of days (estimate 7 if unclear).\n" \
+        "   - dosage_form: The dosage form (e.g., tablet, syrup, injection) if visible, else null.\n"
         "Return only valid JSON matching the schema. If a field cannot be determined, use null."
     )
 

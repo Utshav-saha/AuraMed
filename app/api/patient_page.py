@@ -30,10 +30,13 @@ class PrescriptionResponse(BaseModel):
     prescription_id: int
     patient_id: int
     doctor_id: int
+    specialization: Optional[str] = None
+    doctorName: Optional[str] = None
     prescribed_at: datetime
     disease_diagnosis: str
     location_issued: Coordinate
     items: List[PrescriptionItem]
+
 
 class TotalDosage(BaseModel):
     medicine_id: int
@@ -93,9 +96,10 @@ async def get_prescriptions(patient_id: int):
         query = """
             SELECT p.id AS prescription_id, p.patient_id, p.doctor_id, p.prescribed_at, p.disease_diagnosis,
                    ST_Y(p.location_issued::geometry) AS latitude, ST_X(p.location_issued::geometry) AS longitude,
-                   pi.medicine_id, pi.dosage_instruction, pi.duration
+                   pi.medicine_id, pi.dosage_instruction, pi.duration, d.specialization AS specialization, d.name AS doctorName
             FROM prescriptions p
             LEFT JOIN prescription_items pi ON p.id = pi.prescription_id
+            LEFT JOIN doctors d ON p.doctor_id = d.id
             WHERE p.patient_id = $1
         """
         results = await conn.fetch(query, patient_id)
@@ -117,6 +121,8 @@ async def get_prescriptions(patient_id: int):
                     prescription_id=presc_id,
                     patient_id=record["patient_id"],
                     doctor_id=record["doctor_id"],
+                    specialization=record["specialization"],
+                    doctorName=record["doctorName"],
                     prescribed_at=record["prescribed_at"],
                     disease_diagnosis=record["disease_diagnosis"],
                     location_issued=Coordinate(latitude=float(lat), longitude=float(lon)),

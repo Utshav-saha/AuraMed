@@ -167,6 +167,7 @@ export default function LoginPage() {
           <div className="flex bg-[#F3F5FB] border border-[#E6ECF7] rounded-2xl p-1 mb-6">
             {(["signin", "signup"] as const).map((m) => (
               <button
+                type="button"
                 key={m}
                 onClick={() => switchMode(m)}
                 className={`flex-1 py-2 rounded-xl text-[13px] font-semibold transition-all ${
