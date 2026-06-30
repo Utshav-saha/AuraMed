@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown,
   Clock, AlarmClock, ScanLine, QrCode, Search,
   PlusCircle, Trash2, AlertTriangle, X, LayoutDashboard, Pill, LogOut,
-  Loader2, CheckCircle2,
+  Loader2, CheckCircle2, HeartPulse,
 } from "lucide-react";
 import { useRequireAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
@@ -38,11 +38,11 @@ interface TimeSlot {
 
 const NAV_ITEMS = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard", active: true },
-  { icon: Calendar, label: "Book Appointment", href: "/appointments" },
-  { icon: MapPin, label: "Find Pharmacies", href: "/location" },
-  { icon: Pill, label: "Search Medicine", href: "/medicines" },
-  { icon: Calculator, label: "Dosage Calculator", href: "/dosage" },
-  { icon: ShoppingCart, label: "View Cart", href: "/cart" },
+  { icon: Calendar, label: "Appointments", href: "/appointments" },
+  { icon: MapPin, label: "Pharmacies", href: "/location" },
+  { icon: Pill, label: "Medicines", href: "/medicines" },
+  { icon: Calculator, label: "Calculator", href: "/dosage" },
+  { icon: ShoppingCart, label: "Cart", href: "/cart" },
 ];
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -84,20 +84,21 @@ function TimePicker({ slot, onChange }: { slot: TimeSlot; onChange: (s: TimeSlot
 
   return (
     <div className="flex items-center gap-1.5">
-      <div className="time-picker-box">
-        <button className="time-arrow-btn" onClick={() => stepHour(1)}><ChevronUp size={11} /></button>
-        <div className="time-value">{String(slot.hour).padStart(2, "0")}</div>
-        <button className="time-arrow-btn" onClick={() => stepHour(-1)}><ChevronDown size={11} /></button>
+      <div className="flex flex-col items-center bg-zinc-100 rounded-lg w-10 border border-zinc-200 shadow-sm overflow-hidden">
+        <button type="button" className="w-full text-zinc-400 hover:text-zinc-900 hover:bg-zinc-200 transition-colors py-0.5 flex justify-center" onClick={() => stepHour(1)}><ChevronUp size={14} /></button>
+        <div className="text-sm font-semibold text-zinc-900 py-1 bg-white w-full text-center">{String(slot.hour).padStart(2, "0")}</div>
+        <button type="button" className="w-full text-zinc-400 hover:text-zinc-900 hover:bg-zinc-200 transition-colors py-0.5 flex justify-center" onClick={() => stepHour(-1)}><ChevronDown size={14} /></button>
       </div>
-      <span className="text-[13px] font-bold text-[#2E5FA8] select-none pb-0.5">:</span>
-      <div className="time-picker-box">
-        <button className="time-arrow-btn" onClick={() => stepMinute(1)}><ChevronUp size={11} /></button>
-        <div className="time-value">{String(slot.minute).padStart(2, "0")}</div>
-        <button className="time-arrow-btn" onClick={() => stepMinute(-1)}><ChevronDown size={11} /></button>
+      <span className="text-sm font-bold text-zinc-400 select-none pb-0.5">:</span>
+      <div className="flex flex-col items-center bg-zinc-100 rounded-lg w-10 border border-zinc-200 shadow-sm overflow-hidden">
+        <button type="button" className="w-full text-zinc-400 hover:text-zinc-900 hover:bg-zinc-200 transition-colors py-0.5 flex justify-center" onClick={() => stepMinute(1)}><ChevronUp size={14} /></button>
+        <div className="text-sm font-semibold text-zinc-900 py-1 bg-white w-full text-center">{String(slot.minute).padStart(2, "0")}</div>
+        <button type="button" className="w-full text-zinc-400 hover:text-zinc-900 hover:bg-zinc-200 transition-colors py-0.5 flex justify-center" onClick={() => stepMinute(-1)}><ChevronDown size={14} /></button>
       </div>
       <button
+        type="button"
         onClick={() => onChange({ ...slot, ampm: slot.ampm === "AM" ? "PM" : "AM" })}
-        className="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-[#EEF3FC] border border-[#C6D8EE] text-[#2E5FA8] hover:bg-[#D5E9FF] transition-colors w-8 text-center"
+        className="text-xs font-bold px-2 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-700 hover:bg-indigo-600 hover:text-white transition-colors w-12 text-center ml-2 shadow-sm"
       >
         {slot.ampm}
       </button>
@@ -133,7 +134,6 @@ export default function DashboardPage() {
   const [qrError, setQrError] = useState<string | null>(null);
 
   const reloadPrescriptions = useCallback(async () => {
-    setLoading(true);
     try {
       const list = await loadEnrichedPrescriptions(patientId);
       const adapted: Prescription[] = list
@@ -181,6 +181,7 @@ export default function DashboardPage() {
         `Added prescription with ${res.items.length} medicine${res.items.length === 1 ? "" : "s"}` +
           ` (${matched} matched to our catalog).`
       );
+      setLoading(true);
       await reloadPrescriptions();
       setCurrentIndex(0);
     } catch (err) {
@@ -198,6 +199,7 @@ export default function DashboardPage() {
       await api.addPrescriptionFromQr(patientId, id);
       setQrOpen(false);
       setQrId("");
+      setLoading(true);
       await reloadPrescriptions();
       setCurrentIndex(0);
     } catch (err) {
@@ -211,7 +213,6 @@ export default function DashboardPage() {
     if (!rx) return;
     setSavingReminders(true);
     
-    // Ensure we have an email to send to, fallback required by the API
     const userEmail = user?.email || "patient@example.com";
 
     try {
@@ -224,33 +225,20 @@ export default function DashboardPage() {
         const slots = timeSlots[key] || [];
 
         for (const slot of slots) {
-          // Convert 12hr slot to 24hr format
           let hour24 = slot.hour;
           if (slot.ampm === "PM" && hour24 !== 12) hour24 += 12;
           if (slot.ampm === "AM" && hour24 === 12) hour24 = 0;
 
-          // Loop through the duration days to schedule daily reminders
           for (let dayOffset = 0; dayOffset < item.durationDays; dayOffset++) {
             const scheduleDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, hour24, slot.minute, 0);
-            
-            // Skip scheduling if the time has already passed today
             if (scheduleDate <= now) continue;
 
-            // Push the request to the array
             promises.push(
-              fetch("http://localhost:8000/api/v1/patient_page/send_notification", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  // Include Authorization if your backend requires it for this endpoint
-                  // "Authorization": `Bearer ${localStorage.getItem("access_token")}` 
-                },
-                body: JSON.stringify({
-                  patient_email: userEmail,
-                  medicine_name: item.brandName,
-                  schedule_time: scheduleDate.toISOString(),
-                  status: "pending"
-                })
+              api.sendNotification({
+                patient_email: userEmail,
+                medicine_name: item.brandName,
+                schedule_time: scheduleDate.toISOString(),
+                status: "pending",
               })
             );
           }
@@ -259,7 +247,6 @@ export default function DashboardPage() {
 
       await Promise.all(promises);
       setReminderOpen(false);
-      
     } catch (error) {
       console.error("Failed to save reminders", error);
       alert("Failed to schedule some reminders. Please try again.");
@@ -297,356 +284,323 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#EDF1F9] overflow-hidden">
+    <div className="flex h-screen bg-[#FAFAFA] font-sans selection:bg-indigo-100 selection:text-indigo-900 overflow-hidden text-zinc-900">
 
-      {/* ── Top Nav ────────────────────────────────────────── */}
-      <header className="bg-white border-b border-[#E6ECF7] shadow-[0_1px_12px_rgba(140,158,205,0.09)] flex items-center justify-between px-6 py-3 shrink-0 z-10">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-linear-to-br from-[#5AA6E8] to-[#3A78C4] flex items-center justify-center shadow-sm shrink-0">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path d="M12 21C12 21 3 14 3 8.5C3 5.46 5.46 3 8.5 3C10.24 3 11.91 3.81 13 5.08C14.09 3.81 15.76 3 17.5 3C20.54 3 23 5.46 23 8.5C23 14 12 21 12 21Z" fill="white" />
-            </svg>
+      {/* ── Fixed Sidebar ───────────────────────────────────── */}
+      <aside className="w-64 bg-white border-r border-zinc-200 flex flex-col shrink-0 z-20 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+        {/* Sidebar Header (Logo) */}
+        <div className="h-16 flex items-center px-6 border-b border-zinc-100 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-full bg-zinc-900 flex items-center justify-center shrink-0">
+              <HeartPulse size={16} className="text-white" />
+            </div>
+            <span className="text-base font-bold tracking-tight text-zinc-900">AuraMed</span>
           </div>
-          <span className="text-[17px] font-semibold text-[#1B2A4A] tracking-tight">AuraMed</span>
         </div>
-        <div className="flex items-center gap-2">
-          <button className="relative w-9 h-9 rounded-full flex items-center justify-center hover:bg-[#EAF2FF] transition-colors">
-            <Bell size={18} className="text-[#6A7898]" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#4D8ED6] border-2 border-white" />
-          </button>
-          <button className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-[#EAF2FF] transition-colors">
-            <Settings size={18} className="text-[#6A7898]" />
-          </button>
-          <button
-            onClick={logout}
-            title="Log out"
-            className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-[#FDEAEA] hover:text-[#D94F4F] text-[#6A7898] transition-colors"
-          >
-            <LogOut size={17} />
-          </button>
-          <div title={displayName} className="w-9 h-9 rounded-full bg-linear-to-br from-amber-300 to-amber-500 flex items-center justify-center text-white text-sm font-semibold">{avatarInitial}</div>
-        </div>
-      </header>
 
-      {/* ── Body ───────────────────────────────────────────── */}
-      <div className="flex flex-1 gap-4 p-4 overflow-hidden">
-
-        {/* ── Left Sidebar ────────────────────────────────── */}
-        <aside className="bg-white rounded-[22px] shadow-[0_2px_20px_rgba(140,158,205,0.11),0_1px_4px_rgba(140,158,205,0.06)] border border-[rgba(215,225,245,0.70)] w-49 shrink-0 flex flex-col gap-1.5 p-3">
+        {/* Sidebar Nav */}
+        <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
           {NAV_ITEMS.map(({ icon: Icon, label, href, active }) => (
             <a
               key={label}
               href={href}
-              className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group ${
-                active ? "bg-[#EAF2FF] text-[#4D8ED6]" : "text-[#6A7898] hover:bg-[#EAF2FF] hover:text-[#4D8ED6]"
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${
+                active 
+                  ? "bg-zinc-900 text-white shadow-sm" 
+                  : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
               }`}
             >
-              <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
-                active ? "bg-[#D5E9FF]" : "bg-[#EAF2FF] group-hover:bg-[#D5E9FF]"
-              }`}>
-                <Icon size={15} className="text-[#4D8ED6]" />
-              </div>
-              <span className={`text-[12.5px] leading-tight ${active ? "font-semibold" : "font-medium"}`}>{label}</span>
+              <Icon size={18} className={active ? "text-indigo-400" : "text-zinc-400 group-hover:text-zinc-600"} />
+              <span className="text-sm font-medium">{label}</span>
             </a>
           ))}
-        </aside>
+        </nav>
+      </aside>
 
-        {/* ── Main Content ────────────────────────────────── */}
-        <main className="flex-1 flex flex-col gap-4 overflow-y-auto min-w-0">
+      {/* ── Main Canvas ─────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        {/* Subtle background glow */}
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
 
-          {/* ── Top row: Greeting + Search | Carousel ─────── */}
-          <div className="shrink-0 flex items-end gap-6">
-
-            {/* Left: greeting + search */}
-            <div className="flex-1 flex flex-col gap-3 min-w-0">
-              <h1 className="text-[22px] font-semibold text-[#1B2A4A] tracking-tight">
-                Hey, {firstName}! Glad to have you back 🙌
-              </h1>
-
-              {/* Search bar */}
-              <div className="relative group">
-                <Search
-                  size={15}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 text-[#9DAABF] group-focus-within:text-[#4D8ED6] transition-colors pointer-events-none z-10"
-                />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") submitSearch(); }}
-                  placeholder="Search medicine by name or symptom…"
-                  className="w-full h-11 pl-10 pr-4 bg-white border border-[#E6ECF7] rounded-2xl text-[13px] text-[#1B2A4A] placeholder:text-[#9DAABF] shadow-[0_1px_8px_rgba(140,158,205,0.08)] focus:outline-none focus:border-[#4D8ED6] focus:shadow-[0_0_0_3px_rgba(77,142,214,0.10),0_1px_8px_rgba(140,158,205,0.08)] transition-all"
-                />
-              </div>
-            </div>
-
-            {/* Right: carousel */}
-            <div className="shrink-0 w-105">
-              <p className="text-[13px] font-semibold text-[#1B2A4A] mb-2.5">My Prescriptions</p>
-              <div className="flex items-center gap-2.5">
-
-                {/* Left arrow */}
-                <button
-                  onClick={() => canGoLeft && setCurrentIndex((i) => i - 1)}
-                  disabled={!canGoLeft}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 ${
-                    canGoLeft
-                      ? "bg-white border border-[#D8E0F0] text-[#4D8ED6] hover:bg-[#EAF2FF] shadow-sm cursor-pointer"
-                      : "bg-[#F3F5FB] border border-[#E6ECF7] text-[#C8D0E0] cursor-not-allowed"
-                  }`}
-                >
-                  <ChevronLeft size={15} />
-                </button>
-
-                {/* Pills track */}
-                <div className="flex items-stretch gap-2 flex-1">
-                  {prevRx ? (
-                    <button
-                      onClick={() => setCurrentIndex((i) => i - 1)}
-                      className="rx-card-side flex-1 px-3 py-2 text-left"
-                    >
-                      <p className="text-[9.5px] font-medium text-[#9DAABF]">{formatDate(prevRx.date)}</p>
-                      <p className="text-[11px] font-medium text-[#6A7898] truncate mt-0.5">{prevRx.diagnosis}</p>
-                    </button>
-                  ) : (
-                    <div className="flex-1" />
-                  )}
-
-                  <div className="rx-card-center flex-[1.7] px-3.5 py-2.5">
-                    {rx ? (
-                      <>
-                        <p className="text-[10.5px] font-semibold text-[#4D8ED6]">{formatDate(rx.date)}</p>
-                        <p className="text-[12.5px] font-bold text-[#1B2A4A] truncate mt-0.5">{rx.diagnosis}</p>
-                        <p className="text-[10px] text-[#9DAABF] mt-0.5">{rx.doctorName}</p>
-                      </>
-                    ) : (
-                      <p className="text-[11px] text-[#9DAABF]">No prescriptions yet</p>
-                    )}
-                  </div>
-
-                  {nextRx ? (
-                    <button
-                      onClick={() => setCurrentIndex((i) => i + 1)}
-                      className="rx-card-side flex-1 px-3 py-2 text-left"
-                    >
-                      <p className="text-[9.5px] font-medium text-[#9DAABF]">{formatDate(nextRx.date)}</p>
-                      <p className="text-[11px] font-medium text-[#6A7898] truncate mt-0.5">{nextRx.diagnosis}</p>
-                    </button>
-                  ) : (
-                    <div className="flex-1" />
-                  )}
-                </div>
-
-                {/* Right arrow */}
-                <button
-                  onClick={() => canGoRight && setCurrentIndex((i) => i + 1)}
-                  disabled={!canGoRight}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 ${
-                    canGoRight
-                      ? "bg-white border border-[#D8E0F0] text-[#4D8ED6] hover:bg-[#EAF2FF] shadow-sm cursor-pointer"
-                      : "bg-[#F3F5FB] border border-[#E6ECF7] text-[#C8D0E0] cursor-not-allowed"
-                  }`}
-                >
-                  <ChevronRight size={15} />
-                </button>
-              </div>
+        {/* ── Top Header ───────────────────────────────────── */}
+        <header className="h-16 bg-white/70 backdrop-blur-md border-b border-zinc-200 flex items-center justify-between px-8 shrink-0 z-10">
+          
+          {/* Mobile Menu trigger (hidden on desktop, stubbed for visual) */}
+          <div className="lg:hidden flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-zinc-900 flex items-center justify-center shrink-0">
+              <HeartPulse size={16} className="text-white" />
             </div>
           </div>
+          <div className="hidden lg:block" /> {/* Spacer */}
 
-          {/* ── Prescription Detail Card ───────────────────── */}
-          <div className="bg-white rounded-[22px] shadow-[0_2px_20px_rgba(140,158,205,0.11),0_1px_4px_rgba(140,158,205,0.06)] border border-[rgba(215,225,245,0.70)] p-6 flex flex-col flex-1 min-h-0">
+          {/* Right Actions */}
+          <div className="flex items-center gap-3">
+            <button className="relative w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-100 transition-colors">
+              <Bell size={18} className="text-zinc-500 hover:text-zinc-900" />
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-500 border-2 border-white" />
+            </button>
+            <button className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-100 transition-colors">
+              <Settings size={18} className="text-zinc-500 hover:text-zinc-900" />
+            </button>
+            <div className="w-px h-5 bg-zinc-200 mx-1" />
+            <div 
+              title={displayName} 
+              className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm border border-indigo-700 ml-1 cursor-default"
+            >
+              {avatarInitial}
+            </div>
+            <button
+              onClick={logout}
+              title="Log out"
+              className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-red-50 text-zinc-400 hover:text-red-600 transition-colors ml-1"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
+        </header>
 
-            {loading ? (
-              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
-                <Loader2 size={26} className="text-[#4D8ED6] animate-spin" />
-                <p className="text-[13px] text-[#6A7898]">Loading your prescriptions…</p>
+        {/* ── Scrollable Body ──────────────────────────────── */}
+        <main className="flex-1 overflow-y-auto p-8 lg:p-10">
+          <div className="max-w-6xl mx-auto flex flex-col gap-8">
+            
+            {/* ── Greeting & Actions ───────────────────────── */}
+            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
+              <div className="flex-1 max-w-xl">
+                <h1 className="text-3xl lg:text-4xl font-bold tracking-tight text-zinc-900 mb-2">
+                  Hey, {firstName}! 🙌
+                </h1>
+                <p className="text-zinc-500 mb-6"> Heres whats happening with your health today.</p>
+                
+                {/* Search Bar */}
+                <div className="relative group">
+                  <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-zinc-900 transition-colors pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") submitSearch(); }}
+                    placeholder="Search medicine by name or symptom…"
+                    className="w-full h-12 pl-12 pr-4 bg-white border border-zinc-200 rounded-full text-sm text-zinc-900 placeholder:text-zinc-400 shadow-sm focus:outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900 transition-all"
+                  />
+                </div>
               </div>
-            ) : !rx ? (
-              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
-                <div className="w-14 h-14 rounded-full bg-[#EAF2FF] flex items-center justify-center">
-                  <ScanLine size={24} className="text-[#B8D4F5]" />
-                </div>
-                <p className="text-[14px] font-semibold text-[#1B2A4A]">No prescriptions yet</p>
-                <p className="text-[12px] text-[#9DAABF] max-w-70 leading-relaxed">
-                  Scan a prescription or link one via QR to see it here.
-                </p>
-              </div>
-            ) : (
-              <>
-                {/* Card header */}
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h2 className="text-[18px] font-bold text-[#1B2A4A]">{rx.doctorName}</h2>
-                    <p className="text-[13px] text-[#9DAABF] mt-0.5">{rx.specialization}</p>
-                  </div>
-                  <span className="text-[11px] font-medium text-[#6A7898] bg-[#F3F5FB] border border-[#E6ECF7] px-3 py-1.5 rounded-full shrink-0">
-                    {formatDate(rx.date)}
-                  </span>
-                </div>
 
-                {/* Diagnosis */}
-                <div className="mb-5">
-                  <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#4D8ED6] bg-[#EAF2FF] px-3.5 py-1.5 rounded-full">
-                    {rx.diagnosis}
-                  </span>
+              {/* Action Buttons (Scan) */}
+              <div className="flex flex-col gap-3 shrink-0 lg:w-72">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-semibold text-zinc-900">Quick Actions</span>
                 </div>
-
-                {/* Medicine list */}
-                <div className="flex-1 overflow-y-auto">
-                  <p className="text-[10.5px] font-semibold text-[#9DAABF] uppercase tracking-widest mb-3">
-                    Prescribed Medicines
-                  </p>
-                  {rx.items.map((item, i) => (
-                    <div key={i} className={`py-4 ${i > 0 ? "border-t border-[#E6ECF7]" : ""}`}>
-                      <div className="flex items-start justify-between gap-6">
-                        <div className="flex-1">
-                          <p className="text-[14.5px] font-semibold text-[#1B2A4A]">{item.brandName}</p>
-                          <p className="text-[12px] text-[#9DAABF] mt-0.5">{item.genericName}</p>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-[12.5px] font-medium text-[#6A7898]">{parseDosage(item.dosageInstruction)}</p>
-                          <p className="text-[11px] text-[#9DAABF] mt-0.5">{item.durationDays} days</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Card bottom actions */}
-                <div className="flex items-center justify-between pt-4 border-t border-[#E6ECF7] mt-2 shrink-0">
-                  <a
-                    href="/location?exact=1"
-                    className="aura-btn-secondary inline-flex items-center gap-2 px-5 py-2.5 text-[13px]"
-                  >
-                    <MapPin size={14} />
-                    Where to Buy
-                  </a>
+                <div className="flex gap-2">
+                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onScanFile} />
                   <button
-                    onClick={() => setReminderOpen(true)}
-                    className="aura-btn-primary inline-flex items-center gap-2 px-5 py-2.5 text-[13px]"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={scanState === "scanning"}
+                    className="flex-1 flex flex-col items-center gap-1.5 p-3 bg-white border border-zinc-200 rounded-2xl hover:border-indigo-300 hover:bg-indigo-50/50 transition-all shadow-sm active:scale-95 disabled:opacity-50"
                   >
-                    <AlarmClock size={14} />
-                    Set Reminder
+                    <ScanLine size={20} className="text-indigo-600" />
+                    <span className="text-xs font-semibold text-zinc-700">Scan Script</span>
+                  </button>
+                  <button
+                    onClick={() => { setQrOpen(true); setQrError(null); }}
+                    className="flex-1 flex flex-col items-center gap-1.5 p-3 bg-white border border-zinc-200 rounded-2xl hover:border-indigo-300 hover:bg-indigo-50/50 transition-all shadow-sm active:scale-95"
+                  >
+                    <QrCode size={20} className="text-indigo-600" />
+                    <span className="text-xs font-semibold text-zinc-700">Scan QR</span>
                   </button>
                 </div>
-              </>
-            )}
-          </div>
 
-          {/* ── Scan status + buttons ───────────────────────── */}
-          <div className="flex items-center justify-between gap-3 shrink-0 pb-0.5">
-            <div className="min-w-0">
-              {scanState === "scanning" && (
-                <span className="inline-flex items-center gap-2 text-[12px] text-[#4D8ED6]">
-                  <Loader2 size={13} className="animate-spin" /> {scanMessage}
-                </span>
-              )}
-              {scanState === "done" && (
-                <span className="inline-flex items-center gap-2 text-[12px] text-[#22A06B]">
-                  <CheckCircle2 size={13} /> {scanMessage}
-                </span>
-              )}
-              {scanState === "error" && (
-                <span className="inline-flex items-center gap-2 text-[12px] text-[#D94F4F]">
-                  <AlertTriangle size={13} /> {scanMessage}
-                </span>
-              )}
+                {/* Scan Status Feedback */}
+                {scanState !== "idle" && (
+                  <div className={`flex items-center gap-2 text-xs font-medium mt-1 px-1 ${scanState === 'error' ? 'text-red-500' : scanState === 'done' ? 'text-emerald-600' : 'text-indigo-600'}`}>
+                    {scanState === "scanning" && <Loader2 size={14} className="animate-spin" />}
+                    {scanState === "done" && <CheckCircle2 size={14} />}
+                    {scanState === "error" && <AlertTriangle size={14} />}
+                    <span className="truncate">{scanMessage}</span>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={onScanFile}
-              />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={scanState === "scanning"}
-                className="aura-btn-secondary inline-flex items-center gap-2 px-5 py-2.5 text-[13px] disabled:opacity-60"
-              >
-                <ScanLine size={14} />
-                Scan Prescription
-              </button>
-              <button
-                onClick={() => { setQrOpen(true); setQrError(null); }}
-                className="aura-btn-secondary inline-flex items-center gap-2 px-5 py-2.5 text-[13px]"
-              >
-                <QrCode size={14} />
-                Scan QR
-              </button>
+
+            {/* ── Prescriptions Section ──────────────────────── */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-zinc-900">Your Prescriptions</h2>
+                {/* Navigator Controls */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => canGoLeft && setCurrentIndex((i) => i - 1)}
+                    disabled={!canGoLeft}
+                    className="w-8 h-8 rounded-full border border-zinc-200 flex items-center justify-center hover:bg-zinc-100 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span className="text-xs font-semibold text-zinc-500 min-w-[3rem] text-center">
+                    {prescriptions.length > 0 ? `${currentIndex + 1} / ${prescriptions.length}` : "0 / 0"}
+                  </span>
+                  <button
+                    onClick={() => canGoRight && setCurrentIndex((i) => i + 1)}
+                    disabled={!canGoRight}
+                    className="w-8 h-8 rounded-full border border-zinc-200 flex items-center justify-center hover:bg-zinc-100 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Prescription Content Area */}
+              <div className="bg-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-zinc-200 overflow-hidden min-h-[400px] flex flex-col">
+                
+                {loading ? (
+                  <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
+                    <Loader2 size={32} className="text-zinc-300 animate-spin mb-4" />
+                    <p className="text-sm font-medium text-zinc-500">Loading your health records…</p>
+                  </div>
+                ) : !rx ? (
+                  <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
+                    <div className="w-16 h-16 rounded-2xl bg-zinc-50 border border-zinc-100 flex items-center justify-center mb-4">
+                      <ScanLine size={28} className="text-zinc-300" />
+                    </div>
+                    <p className="text-lg font-bold text-zinc-900">No prescriptions found</p>
+                    <p className="text-sm text-zinc-500 max-w-sm mt-1">
+                      Upload a photo of your paper prescription or scan a clinic QR code to get started.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col h-full">
+                    
+                    {/* Card Header (Doctor & Date) */}
+                    <div className="px-8 py-6 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-start justify-between gap-4 bg-zinc-50/50">
+                      <div>
+                        <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold mb-3 shadow-sm border border-indigo-100">
+                          {rx.diagnosis}
+                        </div>
+                        <h3 className="text-xl font-bold text-zinc-900">{rx.doctorName}</h3>
+                        <p className="text-sm text-zinc-500 font-medium mt-0.5">{rx.specialization}</p>
+                      </div>
+                      <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-lg shadow-sm">
+                        <Calendar size={14} className="text-zinc-400" />
+                        <span className="text-sm font-semibold text-zinc-700">{formatDate(rx.date)}</span>
+                      </div>
+                    </div>
+
+                    {/* Medicines List */}
+                    <div className="flex-1 p-8 overflow-y-auto">
+                      <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-4">
+                        Prescribed Medicines
+                      </p>
+                      <div className="flex flex-col gap-3">
+                        {rx.items.map((item, i) => (
+                          <div key={i} className="group p-4 rounded-2xl border border-zinc-100 hover:border-zinc-200 hover:shadow-[0_2px_10px_rgba(0,0,0,0.02)] transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white">
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-xl bg-zinc-50 border border-zinc-100 flex items-center justify-center shrink-0">
+                                <Pill size={18} className="text-indigo-500" />
+                              </div>
+                              <div>
+                                <p className="text-base font-bold text-zinc-900">{item.brandName}</p>
+                                <p className="text-xs text-zinc-500 font-medium mt-0.5">{item.genericName}</p>
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-4 sm:justify-end">
+                              <div className="text-right">
+                                <p className="text-sm font-bold text-zinc-700">{parseDosage(item.dosageInstruction)}</p>
+                                <p className="text-xs text-zinc-400 font-medium mt-0.5">for {item.durationDays} days</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Card Footer (Actions) */}
+                    <div className="px-8 py-5 border-t border-zinc-100 bg-white flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
+                      <a
+                        href="/location?exact=1"
+                        className="w-full sm:w-auto inline-flex justify-center items-center gap-2 px-6 py-2.5 bg-white border border-zinc-200 text-zinc-700 text-sm font-semibold rounded-xl hover:bg-zinc-50 transition-colors shadow-sm"
+                      >
+                        <MapPin size={16} className="text-zinc-400" />
+                        Find Pharmacy
+                      </a>
+                      <button
+                        onClick={() => setReminderOpen(true)}
+                        className="w-full sm:w-auto inline-flex justify-center items-center gap-2 px-6 py-2.5 bg-zinc-900 text-white text-sm font-semibold rounded-xl hover:bg-zinc-800 transition-all shadow-md active:scale-95"
+                      >
+                        <AlarmClock size={16} />
+                        Set Reminders
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </main>
       </div>
 
-      {/* ── Set Reminder Overlay ─────────────────────────────── */}
+      {/* ── Overlays (Modals) ────────────────────────────────── */}
+
+      {/* Set Reminder Overlay */}
       {reminderOpen && rx && (
         <div
-          className="overlay-backdrop"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200"
           onClick={(e) => { if (e.target === e.currentTarget && !savingReminders) setReminderOpen(false); }}
         >
-          <div
-            className="overlay-panel w-full max-w-lg mx-4 flex flex-col"
-            style={{ maxHeight: "88vh" }}
-          >
-            {/* Overlay header */}
-            <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl flex flex-col overflow-hidden max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="px-6 pt-6 pb-4 border-b border-zinc-100 flex items-center justify-between shrink-0 bg-white">
               <div>
-                <h2 className="text-[17px] font-semibold text-[#1B2A4A]">Set medicine reminder</h2>
-                <p className="text-[12px] text-[#9DAABF] mt-0.5">{rx.diagnosis} · {formatDate(rx.date)}</p>
+                <h2 className="text-xl font-bold text-zinc-900">Dose Reminders</h2>
+                <p className="text-sm text-zinc-500 font-medium mt-1">{rx.diagnosis}</p>
               </div>
               <button
                 onClick={() => !savingReminders && setReminderOpen(false)}
-                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-[#F3F5FB] text-[#9DAABF] hover:text-[#6A7898] transition-colors"
+                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-zinc-100 text-zinc-400 hover:text-zinc-900 transition-colors"
               >
-                <X size={16} />
+                <X size={18} />
               </button>
             </div>
 
-            {/* Medicine rows */}
-            <div className="flex-1 overflow-y-auto px-6 flex flex-col gap-3">
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 bg-zinc-50/50">
               {rx.items.map((item, medIdx) => {
                 const key = slotKey(medIdx);
                 const slots = timeSlots[key] ?? [];
                 return (
-                  <div key={medIdx} className="border border-[#E6ECF7] rounded-2xl bg-[#FAFBFF] overflow-hidden">
-                    {/* Medicine info */}
-                    <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3">
-                      <div className="flex-1">
-                        <p className="text-[13.5px] font-semibold text-[#1B2A4A]">{item.brandName}</p>
-                        <p className="text-[11px] text-[#9DAABF] mt-0.5">
-                          {item.genericName} · {parseDosage(item.dosageInstruction)} · {item.durationDays} days
+                  <div key={medIdx} className="bg-white border border-zinc-200 rounded-2xl overflow-hidden shadow-sm">
+                    {/* Medicine Info */}
+                    <div className="px-5 py-4 border-b border-zinc-100 bg-zinc-50/50 flex justify-between items-start">
+                      <div>
+                        <p className="text-sm font-bold text-zinc-900">{item.brandName}</p>
+                        <p className="text-xs text-zinc-500 mt-1">
+                          {parseDosage(item.dosageInstruction)} · {item.durationDays} days
                         </p>
                       </div>
-                      <Clock size={14} className="text-[#B8D4F5] mt-0.5 shrink-0" />
+                      <Clock size={16} className="text-zinc-400" />
                     </div>
 
-                    {/* Time slots */}
-                    <div className="border-t border-[#E6ECF7] px-4 py-3 flex flex-col gap-2.5">
+                    {/* Time Slots List */}
+                    <div className="p-5 flex flex-col gap-4">
                       {slots.map((slot, slotIdx) => (
-                        <div key={slotIdx} className="flex items-center gap-2">
-                          <TimePicker
-                            slot={slot}
-                            onChange={(s) => updateSlot(key, slotIdx, s)}
-                          />
-                          <div className="flex items-center gap-1 ml-auto">
-                            <button
-                              onClick={() => addSlot(key)}
-                              title="Add another time"
-                              className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[#EAF2FF] transition-colors"
-                            >
-                              <PlusCircle size={15} className="text-[#4D8ED6]" />
-                            </button>
+                        <div key={slotIdx} className="flex items-center justify-between gap-4">
+                          <TimePicker slot={slot} onChange={(s) => updateSlot(key, slotIdx, s)} />
+                          
+                          <div className="flex items-center gap-2">
                             {slots.length > 1 && (
                               <button
                                 onClick={() => setDeleteConfirm({ key, slotIdx })}
                                 title="Remove this time"
-                                className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[#FDEAEA] transition-colors"
+                                className="w-8 h-8 rounded-xl flex items-center justify-center text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors"
                               >
-                                <Trash2 size={13} className="text-[#D94F4F]" />
+                                <Trash2 size={16} />
                               </button>
                             )}
+                            <button
+                              onClick={() => addSlot(key)}
+                              title="Add another time"
+                              className="w-8 h-8 rounded-xl flex items-center justify-center text-indigo-600 hover:bg-indigo-50 transition-colors border border-transparent hover:border-indigo-100"
+                            >
+                              <PlusCircle size={18} />
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -656,91 +610,92 @@ export default function DashboardPage() {
               })}
             </div>
 
-            {/* Overlay footer */}
-            <div className="px-6 py-4 shrink-0 border-t border-[#E6ECF7]">
+            {/* Modal Footer */}
+            <div className="px-6 py-5 border-t border-zinc-100 bg-white shrink-0">
               <button
                 onClick={handleSaveReminders}
                 disabled={savingReminders}
-                className="aura-btn-primary w-full py-3 text-[13px] font-semibold flex items-center justify-center gap-2 disabled:opacity-70"
+                className="w-full h-12 bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.98] disabled:opacity-70 disabled:active:scale-100"
               >
                 {savingReminders && <Loader2 size={16} className="animate-spin" />}
-                {savingReminders ? "Scheduling..." : "Save Reminders"}
+                {savingReminders ? "Saving Schedule..." : "Save & Enable Reminders"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Scan QR Overlay ──────────────────────────────────── */}
+      {/* Scan QR Overlay */}
       {qrOpen && (
         <div
-          className="overlay-backdrop"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200"
           onClick={(e) => { if (e.target === e.currentTarget && !qrBusy) setQrOpen(false); }}
         >
-          <div className="overlay-panel w-full max-w-xs mx-4 p-6 flex flex-col gap-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-8 flex flex-col gap-6">
             <div className="flex items-start justify-between">
               <div>
-                <h3 className="text-[15px] font-semibold text-[#1B2A4A]">Link prescription</h3>
-                <p className="text-[11.5px] text-[#9DAABF] mt-0.5">Enter the prescription ID from the QR code.</p>
+                <h3 className="text-xl font-bold text-zinc-900">Link Prescription</h3>
+                <p className="text-sm text-zinc-500 mt-1">Enter the ID from your paper or app QR.</p>
               </div>
               <button
                 onClick={() => !qrBusy && setQrOpen(false)}
-                className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-[#F3F5FB] text-[#9DAABF] shrink-0"
+                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-zinc-100 text-zinc-400 hover:text-zinc-900 transition-colors -mr-2 -mt-2"
               >
-                <X size={14} />
+                <X size={18} />
               </button>
             </div>
 
-            <input
-              type="number"
-              value={qrId}
-              onChange={(e) => setQrId(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") submitQr(); }}
-              placeholder="Prescription ID"
-              className="w-full h-10 px-3 bg-[#F3F5FB] border border-[#E6ECF7] rounded-xl text-[13px] text-[#1B2A4A] placeholder:text-[#9DAABF] focus:outline-none focus:border-[#4D8ED6] focus:bg-white transition-all"
-            />
-
-            {qrError && (
-              <p className="text-[11.5px] text-[#D94F4F] flex items-center gap-1.5">
-                <AlertTriangle size={12} /> {qrError}
-              </p>
-            )}
+            <div>
+              <input
+                type="number"
+                value={qrId}
+                onChange={(e) => setQrId(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") submitQr(); }}
+                placeholder="e.g. 10452"
+                className="w-full h-12 px-4 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-medium text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
+              />
+              {qrError && (
+                <p className="text-xs font-medium text-red-500 flex items-center gap-1.5 mt-2">
+                  <AlertTriangle size={14} /> {qrError}
+                </p>
+              )}
+            </div>
 
             <button
               onClick={submitQr}
               disabled={qrBusy}
-              className="aura-btn-primary w-full py-2.5 text-[13px] font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+              className="w-full h-12 bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.98] disabled:opacity-70 disabled:active:scale-100"
             >
-              {qrBusy ? <Loader2 size={13} className="animate-spin" /> : <QrCode size={13} />}
-              {qrBusy ? "Linking…" : "Link Prescription"}
+              {qrBusy ? <Loader2 size={16} className="animate-spin" /> : <QrCode size={16} />}
+              {qrBusy ? "Linking..." : "Link Now"}
             </button>
           </div>
         </div>
       )}
 
-      {/* ── Delete Confirm Overlay ───────────────────────────── */}
+      {/* Delete Confirm Overlay */}
       {deleteConfirm && (
-        <div className="overlay-backdrop" style={{ zIndex: 60 }}>
-          <div className="overlay-panel w-full max-w-xs mx-4 p-6">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xs p-8">
             <div className="flex flex-col items-center text-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-[#FDEAEA] flex items-center justify-center">
-                <AlertTriangle size={22} className="text-[#D94F4F]" />
+              <div className="w-14 h-14 rounded-full bg-red-50 border border-red-100 flex items-center justify-center mb-1">
+                <AlertTriangle size={24} className="text-red-600" />
               </div>
-              <h3 className="text-[15px] font-semibold text-[#1B2A4A]">Delete time slot?</h3>
-              <p className="text-[12px] text-[#9DAABF] leading-relaxed max-w-55">
-                This reminder time will be permanently removed.
+              <h3 className="text-lg font-bold text-zinc-900">Delete Reminder?</h3>
+              <p className="text-sm text-zinc-500 leading-relaxed">
+                This specific time slot will be permanently removed.
               </p>
-              <div className="flex gap-3 w-full mt-1">
+              
+              <div className="flex gap-3 w-full mt-5">
                 <button
                   onClick={() => setDeleteConfirm(null)}
-                  className="flex-1 aura-btn-secondary py-2.5 text-[13px]"
+                  className="flex-1 py-2.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 text-sm font-semibold rounded-xl transition-colors shadow-sm"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => deleteSlot(deleteConfirm.key, deleteConfirm.slotIdx)}
-                  className="flex-1 py-2.5 text-[13px] font-semibold rounded-xl text-white transition-all hover:opacity-90"
-                  style={{ background: "#D94F4F" }}
+                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-xl transition-all shadow-sm active:scale-95"
                 >
                   Delete
                 </button>

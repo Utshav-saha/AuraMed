@@ -315,6 +315,19 @@ export const api = {
     );
   },
 
+  // ── Reminders ─────────────────────────────────────────────────
+  sendNotification(payload: {
+    patient_email: string;
+    medicine_name: string;
+    schedule_time: string;
+    status: string;
+  }): Promise<void> {
+    return request<void>("/api/v1/patient_page/send_notification", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   // ── Prescriptions (QR linking) ────────────────────────────────
   addPrescriptionFromQr(patientId: number, prescriptionId: number): Promise<void> {
     return request<void>(

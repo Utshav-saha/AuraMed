@@ -5,25 +5,88 @@ import {
   Bell, Settings, Calendar, MapPin, Calculator, ShoppingCart,
   Minus, Plus, Trash2, ShieldCheck, Truck, Tag, ChevronRight,
   PackageOpen, LayoutDashboard, Pill, Loader2, AlertCircle,
+  HeartPulse, LogOut
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { loadEnrichedCart, type EnrichedCartItem } from "@/lib/data";
 import { useAuth } from "@/lib/auth-context";
 
+// ── Nav items ──────────────────────────────────────────────────
 const NAV_ITEMS = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
-  { icon: Calendar, label: "Book Appointment", href: "/appointments" },
-  { icon: MapPin, label: "Find Pharmacies", href: "/location" },
-  { icon: Pill, label: "Search Medicine", href: "/medicines" },
-  { icon: Calculator, label: "Dosage Calculator", href: "/dosage" },
-  { icon: ShoppingCart, label: "View Cart", href: "/cart", active: true },
+  { icon: Calendar, label: "Appointments", href: "/appointments" },
+  { icon: MapPin, label: "Pharmacies", href: "/location" },
+  { icon: Pill, label: "Medicines", href: "/medicines" },
+  { icon: Calculator, label: "Calculator", href: "/dosage" },
+  { icon: ShoppingCart, label: "Cart", href: "/cart", active: true },
 ];
 
 const DELIVERY_FEE = 2.5;
 const TAX_RATE = 0.05;
 
+// ── Shared layout components ──────────────────────────────────
+function NavBar({ logout }: { logout: () => void }) {
+  return (
+    <header className="h-16 bg-white/70 backdrop-blur-md border-b border-zinc-200 flex items-center justify-between px-8 shrink-0 z-10">
+      <div className="lg:hidden flex items-center gap-2.5">
+        <div className="w-8 h-8 rounded-full bg-zinc-900 flex items-center justify-center shrink-0">
+          <HeartPulse size={16} className="text-white" />
+        </div>
+        <span className="text-base font-bold tracking-tight text-zinc-900">AuraMed</span>
+      </div>
+      <div className="hidden lg:block" /> {/* Spacer */}
+      <div className="flex items-center gap-3">
+        <button className="relative w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-100 transition-colors">
+          <Bell size={18} className="text-zinc-500 hover:text-zinc-900" />
+          <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-500 border-2 border-white" />
+        </button>
+        <button className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-100 transition-colors">
+          <Settings size={18} className="text-zinc-500 hover:text-zinc-900" />
+        </button>
+        <div className="w-px h-5 bg-zinc-200 mx-1" />
+        <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm border border-indigo-700 ml-1 cursor-default">
+          A
+        </div>
+        <button onClick={logout} title="Log out" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-red-50 text-zinc-400 hover:text-red-600 transition-colors ml-1">
+          <LogOut size={16} />
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function Sidebar() {
+  return (
+    <aside className="hidden lg:flex w-64 bg-white border-r border-zinc-200 flex-col shrink-0 z-20 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+      <div className="h-16 flex items-center px-6 border-b border-zinc-100 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-full bg-zinc-900 flex items-center justify-center shrink-0">
+            <HeartPulse size={16} className="text-white" />
+          </div>
+          <span className="text-base font-bold tracking-tight text-zinc-900">AuraMed</span>
+        </div>
+      </div>
+      <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
+        {NAV_ITEMS.map(({ icon: Icon, label, href, active }) => (
+          <a
+            key={label}
+            href={href}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${
+              active ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
+            }`}
+          >
+            <Icon size={18} className={active ? "text-indigo-400" : "text-zinc-400 group-hover:text-zinc-600"} />
+            <span className="text-sm font-medium">{label}</span>
+          </a>
+        ))}
+      </nav>
+    </aside>
+  );
+}
+
+// ── Main Page Component ───────────────────────────────────────
 export default function CartPage() {
-  const { patient } = useAuth();
+  const { patient, logout } = useAuth();
   const patientId = patient?.id ?? 1; // placeholder fallback for guest mode
 
   const [cart, setCart] = useState<EnrichedCartItem[]>([]);
@@ -118,17 +181,18 @@ export default function CartPage() {
 
   if (orderResult) {
     return (
-      <div className="flex flex-col h-screen bg-[#EDF1F9] overflow-hidden">
-        <NavBar />
-        <div className="flex flex-1 gap-4 p-4 overflow-hidden">
-          <Sidebar />
-          <main className="flex-1 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-4 text-center">
-              <div className="w-16 h-16 rounded-full bg-[#E6F7F0] flex items-center justify-center">
-                <ShieldCheck size={30} className="text-[#22A06B]" />
+      <div className="flex h-screen bg-[#FAFAFA] font-sans text-zinc-900 overflow-hidden selection:bg-indigo-100 selection:text-indigo-900">
+        <Sidebar />
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+          <NavBar logout={logout} />
+          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
+          <main className="flex-1 flex items-center justify-center p-8">
+            <div className="bg-white rounded-3xl shadow-sm border border-zinc-200 p-12 max-w-md w-full flex flex-col items-center text-center">
+              <div className="w-20 h-20 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mb-6">
+                <ShieldCheck size={40} className="text-emerald-500" />
               </div>
-              <h2 className="text-[20px] font-bold text-[#1B2A4A]">Order Placed!</h2>
-              <p className="text-[13px] text-[#9DAABF] max-w-[320px] leading-relaxed">
+              <h2 className="text-2xl font-bold text-zinc-900 mb-3">Order Placed!</h2>
+              <p className="text-sm text-zinc-500 leading-relaxed mb-8">
                 {orderResult.assigned} medicine{orderResult.assigned === 1 ? "" : "s"} assigned to nearby pharmacies.
                 {orderResult.unassigned > 0
                   ? ` ${orderResult.unassigned} couldn't be matched to a pharmacy in range.`
@@ -136,7 +200,7 @@ export default function CartPage() {
               </p>
               <a
                 href="/dashboard"
-                className="aura-btn-primary px-6 py-2.5 text-[13px] font-semibold mt-2 inline-block"
+                className="w-full py-3.5 bg-zinc-900 text-white text-sm font-bold rounded-xl hover:bg-zinc-800 transition-all shadow-md active:scale-95 flex items-center justify-center"
               >
                 Back to Dashboard
               </a>
@@ -148,292 +212,246 @@ export default function CartPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#EDF1F9] overflow-hidden">
-      <NavBar />
+    <div className="flex h-screen bg-[#FAFAFA] font-sans text-zinc-900 overflow-hidden selection:bg-indigo-100 selection:text-indigo-900">
+      <Sidebar />
 
-      <div className="flex flex-1 gap-4 p-4 overflow-hidden">
-        <Sidebar />
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        <NavBar logout={logout} />
+        {/* Subtle background glow */}
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
 
         {/* ── Main Content ── */}
-        <div className="flex-1 flex gap-4 overflow-hidden min-w-0">
+        <main className="flex-1 overflow-y-auto p-8 lg:p-12">
+          <div className="max-w-6xl mx-auto flex flex-col lg:flex-row gap-8 items-start">
 
-          {/* ── Cart Items ── */}
-          <div className="flex-1 flex flex-col gap-4 overflow-y-auto min-w-0">
-            <div className="flex items-baseline justify-between shrink-0">
-              <div>
-                <h1 className="text-[20px] font-bold text-[#1B2A4A] tracking-tight">Your Cart</h1>
-                <p className="text-[12px] text-[#9DAABF] mt-0.5">
-                  {cart.length} {cart.length === 1 ? "item" : "items"} in your order
-                </p>
+            {/* ── Cart Items List ── */}
+            <div className="flex-1 w-full flex flex-col gap-6">
+              
+              <div className="flex items-end justify-between">
+                <div>
+                  <h1 className="text-3xl font-bold text-zinc-900 tracking-tight">Your Cart</h1>
+                  <p className="text-sm text-zinc-500 mt-2">
+                    {cart.length} {cart.length === 1 ? "item" : "items"} in your order
+                  </p>
+                </div>
+                {cart.length > 0 && (
+                  <button
+                    onClick={clearAll}
+                    className="text-sm text-red-600 hover:text-red-700 hover:bg-red-50 px-4 py-2 rounded-xl transition-colors font-semibold"
+                  >
+                    Clear all
+                  </button>
+                )}
               </div>
+
+              {error && (
+                <p className="text-sm font-semibold text-red-600 bg-red-50 p-4 rounded-xl border border-red-100 flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  {error}
+                </p>
+              )}
+
+              {loading ? (
+                <div className="bg-white rounded-3xl shadow-sm border border-zinc-200 flex flex-col items-center justify-center py-20 text-center">
+                  <Loader2 size={32} className="text-indigo-500 animate-spin mb-4" />
+                  <p className="text-sm font-medium text-zinc-500">Loading your cart…</p>
+                </div>
+              ) : cart.length === 0 ? (
+                <div className="bg-white rounded-3xl shadow-sm border border-zinc-200 flex flex-col items-center justify-center gap-4 text-center py-24 px-6">
+                  <div className="w-20 h-20 rounded-3xl bg-zinc-100 border border-zinc-200 flex items-center justify-center mb-2">
+                    <PackageOpen size={32} className="text-zinc-400" />
+                  </div>
+                  <h2 className="text-xl font-bold text-zinc-900">Your cart is empty</h2>
+                  <p className="text-sm text-zinc-500 max-w-sm leading-relaxed mb-4">
+                    Looks like you havent added any medicines yet. Browse our catalog or find pharmacies nearby.
+                  </p>
+                  <a href="/medicines" className="inline-flex items-center justify-center px-8 py-3.5 bg-zinc-900 text-white text-sm font-bold rounded-xl hover:bg-zinc-800 transition-all shadow-md active:scale-95">
+                    Browse Medicines
+                  </a>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  {cart.map((item) => (
+                    <div
+                      key={item.cart_id}
+                      className="bg-white rounded-3xl border border-zinc-200 p-6 flex flex-col sm:flex-row sm:items-center gap-6 shadow-sm hover:shadow-md transition-all"
+                    >
+                      {/* Medicine icon */}
+                      <div className="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0 hidden sm:flex">
+                        <Pill size={24} className="text-indigo-600" />
+                      </div>
+
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3 flex-wrap mb-1.5">
+                          <p className="text-lg font-bold text-zinc-900">
+                            {item.brand_name}{" "}
+                            {item.strength && <span className="font-medium text-zinc-400">{item.strength}</span>}
+                          </p>
+                          {item.assigned_pharmacy_name && (
+                            <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full tracking-wide">
+                              {item.assigned_pharmacy_name}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-zinc-500 font-medium">{item.generic_name}</p>
+                        {item.manufacturer_name && (
+                          <p className="text-xs text-zinc-400 mt-1">{item.manufacturer_name}</p>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-6 sm:gap-8 w-full sm:w-auto">
+                        {/* Qty controls */}
+                        <div className="flex items-center gap-3 shrink-0">
+                          <button
+                            onClick={() => updateQty(item.cart_id, -1)}
+                            className="w-8 h-8 rounded-lg border border-zinc-200 bg-white flex items-center justify-center text-zinc-500 hover:border-zinc-400 hover:text-zinc-900 transition-colors shadow-sm"
+                          >
+                            <Minus size={14} />
+                          </button>
+                          <span className="text-sm font-bold text-zinc-900 w-6 text-center tabular-nums">
+                            {item.count}
+                          </span>
+                          <button
+                            onClick={() => updateQty(item.cart_id, 1)}
+                            className="w-8 h-8 rounded-lg border border-zinc-200 bg-white flex items-center justify-center text-zinc-500 hover:border-zinc-400 hover:text-zinc-900 transition-colors shadow-sm"
+                          >
+                            <Plus size={14} />
+                          </button>
+                        </div>
+
+                        {/* Price */}
+                        <div className="text-right shrink-0 min-w-[4rem]">
+                          <p className="text-lg font-bold text-zinc-900 tabular-nums">
+                            {fmt(item.unit_price * item.count)}
+                          </p>
+                          {item.count > 1 && (
+                            <p className="text-xs text-zinc-400 font-medium tabular-nums mt-0.5">
+                              {fmt(item.unit_price)} each
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Remove */}
+                        <button
+                          onClick={() => removeItem(item.cart_id)}
+                          disabled={removing[item.cart_id]}
+                          className="w-10 h-10 rounded-xl flex items-center justify-center text-zinc-400 hover:bg-red-50 hover:text-red-600 transition-all shrink-0 disabled:opacity-50"
+                        >
+                          {removing[item.cart_id] ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Delivery info strip */}
               {cart.length > 0 && (
-                <button
-                  onClick={clearAll}
-                  className="text-[12px] text-[#D94F4F] hover:underline font-medium"
-                >
-                  Clear all
-                </button>
+                <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm px-6 py-4 flex items-center gap-4 shrink-0">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center shrink-0">
+                    <Truck size={18} className="text-indigo-600" />
+                  </div>
+                  <p className="text-sm text-zinc-600 font-medium">
+                    Standard delivery <span className="font-bold text-zinc-900 mx-1">{fmt(DELIVERY_FEE)}</span>
+                    {" · "}Estimated <span className="font-bold text-zinc-900 mx-1">2–4 hours</span>
+                  </p>
+                </div>
               )}
             </div>
 
-            {error && (
-              <p className="text-[12px] text-[#D94F4F] flex items-center gap-1.5 shrink-0">
-                <AlertCircle size={13} />
-                {error}
-              </p>
-            )}
+            {/* ── Order Summary Sidebar ── */}
+            <div className="w-full lg:w-[360px] shrink-0 flex flex-col gap-6">
+              <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-8 flex flex-col gap-6">
+                <h2 className="text-lg font-bold text-zinc-900">Order Summary</h2>
 
-            {loading ? (
-              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center py-16">
-                <Loader2 size={26} className="text-[#4D8ED6] animate-spin" />
-                <p className="text-[13px] text-[#6A7898]">Loading your cart…</p>
-              </div>
-            ) : cart.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
-                <div className="w-14 h-14 rounded-full bg-[#EAF2FF] flex items-center justify-center">
-                  <PackageOpen size={26} className="text-[#B8D4F5]" />
-                </div>
-                <p className="text-[14px] font-semibold text-[#1B2A4A]">Your cart is empty</p>
-                <p className="text-[12px] text-[#9DAABF]">Add medicines from the search or pharmacy page.</p>
-                <a href="/medicines" className="aura-btn-primary px-5 py-2.5 text-[13px] font-medium mt-1 inline-block">
-                  Browse Medicines
-                </a>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {cart.map((item) => (
-                  <div
-                    key={item.cart_id}
-                    className="bg-white rounded-[18px] border border-[rgba(215,225,245,0.70)] shadow-[0_2px_16px_rgba(140,158,205,0.09)] p-5 flex items-center gap-5"
-                  >
-                    {/* Medicine icon */}
-                    <div className="w-12 h-12 rounded-2xl bg-[#EAF2FF] flex items-center justify-center shrink-0">
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                        <rect x="3" y="8" width="18" height="13" rx="3" fill="#B8D4F5" />
-                        <path d="M8 8V6a4 4 0 018 0v2" stroke="#4D8ED6" strokeWidth="1.5" strokeLinecap="round" />
-                        <circle cx="12" cy="14" r="2" fill="#4D8ED6" />
-                      </svg>
-                    </div>
-
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-[14px] font-semibold text-[#1B2A4A]">
-                          {item.brand_name}{" "}
-                          {item.strength && <span className="font-normal text-[#9DAABF]">{item.strength}</span>}
-                        </p>
-                        {item.assigned_pharmacy_name && (
-                          <span className="text-[9.5px] font-bold text-[#22A06B] bg-[#E6F7F0] px-2 py-0.5 rounded-full tracking-wide">
-                            {item.assigned_pharmacy_name}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[12px] text-[#9DAABF] mt-0.5">{item.generic_name}</p>
-                      {item.manufacturer_name && (
-                        <p className="text-[11px] text-[#B8C4D8] mt-0.5">{item.manufacturer_name}</p>
-                      )}
-                    </div>
-
-                    {/* Qty controls */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => updateQty(item.cart_id, -1)}
-                        className="w-7 h-7 rounded-lg border border-[#E6ECF7] bg-white flex items-center justify-center text-[#6A7898] hover:border-[#4D8ED6] hover:text-[#4D8ED6] transition-colors"
-                      >
-                        <Minus size={12} />
-                      </button>
-                      <span className="text-[14px] font-semibold text-[#1B2A4A] w-6 text-center tabular-nums">
-                        {item.count}
-                      </span>
-                      <button
-                        onClick={() => updateQty(item.cart_id, 1)}
-                        className="w-7 h-7 rounded-lg border border-[#E6ECF7] bg-white flex items-center justify-center text-[#6A7898] hover:border-[#4D8ED6] hover:text-[#4D8ED6] transition-colors"
-                      >
-                        <Plus size={12} />
-                      </button>
-                    </div>
-
-                    {/* Price */}
-                    <div className="text-right shrink-0 w-20">
-                      <p className="text-[15px] font-bold text-[#1B2A4A] tabular-nums">
-                        {fmt(item.unit_price * item.count)}
-                      </p>
-                      {item.count > 1 && (
-                        <p className="text-[10.5px] text-[#9DAABF] tabular-nums">
-                          {fmt(item.unit_price)} each
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Remove */}
-                    <button
-                      onClick={() => removeItem(item.cart_id)}
-                      disabled={removing[item.cart_id]}
-                      className="w-8 h-8 rounded-xl flex items-center justify-center text-[#C8D0E0] hover:bg-[#FDEAEA] hover:text-[#D94F4F] transition-all shrink-0 disabled:opacity-50"
-                    >
-                      {removing[item.cart_id] ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Delivery info strip */}
-            {cart.length > 0 && (
-              <div className="bg-white rounded-[18px] border border-[rgba(215,225,245,0.70)] shadow-[0_2px_16px_rgba(140,158,205,0.09)] px-5 py-3.5 flex items-center gap-3 shrink-0">
-                <Truck size={16} className="text-[#4D8ED6] shrink-0" />
-                <p className="text-[12px] text-[#6A7898]">
-                  Standard delivery <span className="font-semibold text-[#1B2A4A]">{fmt(DELIVERY_FEE)}</span>
-                  {" · "}Estimated <span className="font-semibold text-[#1B2A4A]">2–4 hours</span>
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* ── Order Summary ── */}
-          <div className="w-[300px] shrink-0 flex flex-col gap-3">
-            <div className="bg-white rounded-[22px] border border-[rgba(215,225,245,0.70)] shadow-[0_2px_20px_rgba(140,158,205,0.11),0_1px_4px_rgba(140,158,205,0.06)] p-5 flex flex-col gap-4">
-              <h2 className="text-[14px] font-bold text-[#1B2A4A]">Order Summary</h2>
-
-              {/* Line items */}
-              <div className="flex flex-col gap-2.5">
-                <div className="flex justify-between items-center">
-                  <span className="text-[12.5px] text-[#6A7898]">Subtotal</span>
-                  <span className="text-[12.5px] font-medium text-[#1B2A4A] tabular-nums">{fmt(subtotal)}</span>
-                </div>
-                {promoApplied && (
+                {/* Line items */}
+                <div className="flex flex-col gap-4">
                   <div className="flex justify-between items-center">
-                    <span className="text-[12.5px] text-[#22A06B]">Promo (10%)</span>
-                    <span className="text-[12.5px] font-medium text-[#22A06B] tabular-nums">−{fmt(discount)}</span>
+                    <span className="text-sm font-medium text-zinc-500">Subtotal</span>
+                    <span className="text-sm font-bold text-zinc-900 tabular-nums">{fmt(subtotal)}</span>
                   </div>
-                )}
+                  {promoApplied && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-bold text-emerald-600">Promo (10%)</span>
+                      <span className="text-sm font-bold text-emerald-600 tabular-nums">−{fmt(discount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-medium text-zinc-500">Delivery fee</span>
+                    <span className="text-sm font-bold text-zinc-900 tabular-nums">
+                      {cart.length > 0 ? fmt(DELIVERY_FEE) : "—"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-medium text-zinc-500">Tax (5%)</span>
+                    <span className="text-sm font-bold text-zinc-900 tabular-nums">{fmt(tax)}</span>
+                  </div>
+                </div>
+
+                <div className="border-t border-zinc-100" />
+
                 <div className="flex justify-between items-center">
-                  <span className="text-[12.5px] text-[#6A7898]">Delivery fee</span>
-                  <span className="text-[12.5px] font-medium text-[#1B2A4A] tabular-nums">
-                    {cart.length > 0 ? fmt(DELIVERY_FEE) : "—"}
-                  </span>
+                  <span className="text-lg font-bold text-zinc-900">Total</span>
+                  <span className="text-2xl font-bold text-zinc-900 tabular-nums">{fmt(total)}</span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-[12.5px] text-[#6A7898]">Tax (5%)</span>
-                  <span className="text-[12.5px] font-medium text-[#1B2A4A] tabular-nums">{fmt(tax)}</span>
+
+                {/* Promo code */}
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Tag size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={promoCode}
+                      onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                      placeholder="Promo code"
+                      disabled={promoApplied}
+                      className="w-full h-12 pl-11 pr-4 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-medium text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all disabled:opacity-50"
+                    />
+                  </div>
+                  <button
+                    onClick={() => promoCode.length > 0 && setPromoApplied((v) => !v)}
+                    className={`px-6 rounded-xl text-sm font-bold transition-all shrink-0 ${
+                      promoApplied
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200 hover:text-zinc-900 border border-zinc-200"
+                    }`}
+                  >
+                    {promoApplied ? "Applied" : "Apply"}
+                  </button>
                 </div>
-              </div>
 
-              <div className="border-t border-[#E6ECF7]" />
-
-              <div className="flex justify-between items-center">
-                <span className="text-[14px] font-bold text-[#1B2A4A]">Total</span>
-                <span className="text-[18px] font-bold text-[#1B2A4A] tabular-nums">{fmt(total)}</span>
-              </div>
-
-              {/* Promo code */}
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Tag size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9DAABF] pointer-events-none" />
-                  <input
-                    type="text"
-                    value={promoCode}
-                    onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
-                    placeholder="Promo code"
-                    disabled={promoApplied}
-                    className="w-full h-9 pl-8 pr-3 bg-[#F3F5FB] border border-[#E6ECF7] rounded-xl text-[12px] text-[#1B2A4A] placeholder:text-[#9DAABF] focus:outline-none focus:border-[#4D8ED6] focus:bg-white transition-all disabled:opacity-50"
-                  />
-                </div>
+                {/* Place Order */}
                 <button
-                  onClick={() => promoCode.length > 0 && setPromoApplied((v) => !v)}
-                  className={`px-3 rounded-xl text-[12px] font-semibold transition-colors shrink-0 ${
-                    promoApplied
-                      ? "bg-[#E6F7F0] text-[#22A06B]"
-                      : "bg-[#EAF2FF] text-[#4D8ED6] hover:bg-[#D5E9FF]"
-                  }`}
+                  disabled={cart.length === 0 || placingOrder}
+                  onClick={placeOrder}
+                  className="w-full py-4 bg-zinc-900 text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
                 >
-                  {promoApplied ? "Applied" : "Apply"}
+                  {placingOrder ? <Loader2 size={18} className="animate-spin" /> : null}
+                  {placingOrder ? "Placing order…" : "Place Order"}
+                  {!placingOrder && <ChevronRight size={18} />}
                 </button>
               </div>
 
-              {/* Place Order */}
-              <button
-                disabled={cart.length === 0 || placingOrder}
-                onClick={placeOrder}
-                className="aura-btn-primary w-full py-3 text-[13.5px] font-semibold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
-              >
-                {placingOrder ? <Loader2 size={15} className="animate-spin" /> : null}
-                {placingOrder ? "Placing order…" : "Place Order"}
-                {!placingOrder && <ChevronRight size={15} />}
-              </button>
+              {/* Trust badges */}
+              <div className="bg-zinc-50 border border-zinc-100 rounded-3xl p-6 flex flex-col gap-4">
+                {[
+                  { icon: ShieldCheck, label: "Verified pharmacy partners" },
+                  { icon: Truck, label: "Same-day delivery available" },
+                ].map(({ icon: Icon, label }) => (
+                  <div key={label} className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-white border border-zinc-200 flex items-center justify-center shrink-0 shadow-sm">
+                      <Icon size={18} className="text-indigo-500" />
+                    </div>
+                    <span className="text-sm font-medium text-zinc-600">{label}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {/* Trust badges */}
-            <div className="bg-white rounded-[18px] border border-[rgba(215,225,245,0.70)] shadow-[0_1px_8px_rgba(140,158,205,0.07)] px-4 py-3.5 flex flex-col gap-2.5">
-              {[
-                { icon: ShieldCheck, label: "Verified pharmacy partners" },
-                { icon: Truck, label: "Same-day delivery available" },
-              ].map(({ icon: Icon, label }) => (
-                <div key={label} className="flex items-center gap-2.5">
-                  <div className="w-6 h-6 rounded-lg bg-[#EAF2FF] flex items-center justify-center shrink-0">
-                    <Icon size={12} className="text-[#4D8ED6]" />
-                  </div>
-                  <span className="text-[11.5px] text-[#6A7898]">{label}</span>
-                </div>
-              ))}
-            </div>
           </div>
-        </div>
+        </main>
       </div>
     </div>
-  );
-}
-
-// ── Shared layout components ──────────────────────────────────
-
-function NavBar() {
-  return (
-    <header className="bg-white border-b border-[#E6ECF7] shadow-[0_1px_12px_rgba(140,158,205,0.09)] flex items-center justify-between px-6 py-3 shrink-0 z-10">
-      <div className="flex items-center gap-2.5">
-        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#5AA6E8] to-[#3A78C4] flex items-center justify-center shadow-sm shrink-0">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M12 21C12 21 3 14 3 8.5C3 5.46 5.46 3 8.5 3C10.24 3 11.91 3.81 13 5.08C14.09 3.81 15.76 3 17.5 3C20.54 3 23 5.46 23 8.5C23 14 12 21 12 21Z" fill="white" />
-          </svg>
-        </div>
-        <span className="text-[17px] font-semibold text-[#1B2A4A] tracking-tight">AuraMed</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <button className="relative w-9 h-9 rounded-full flex items-center justify-center hover:bg-[#EAF2FF] transition-colors">
-          <Bell size={18} className="text-[#6A7898]" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#4D8ED6] border-2 border-white" />
-        </button>
-        <button className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-[#EAF2FF] transition-colors">
-          <Settings size={18} className="text-[#6A7898]" />
-        </button>
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-300 to-amber-500 flex items-center justify-center text-white text-sm font-semibold">A</div>
-      </div>
-    </header>
-  );
-}
-
-function Sidebar() {
-  return (
-    <aside className="bg-white rounded-[22px] shadow-[0_2px_20px_rgba(140,158,205,0.11),0_1px_4px_rgba(140,158,205,0.06)] border border-[rgba(215,225,245,0.70)] w-[196px] shrink-0 flex flex-col gap-1.5 p-3">
-      {NAV_ITEMS.map(({ icon: Icon, label, href, active }) => (
-        <a
-          key={label}
-          href={href}
-          className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group ${
-            active
-              ? "bg-[#EAF2FF] text-[#4D8ED6]"
-              : "text-[#6A7898] hover:bg-[#EAF2FF] hover:text-[#4D8ED6]"
-          }`}
-        >
-          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
-            active ? "bg-[#D5E9FF]" : "bg-[#EAF2FF] group-hover:bg-[#D5E9FF]"
-          }`}>
-            <Icon size={15} className="text-[#4D8ED6]" />
-          </div>
-          <span className={`text-[12.5px] font-medium leading-tight ${active ? "font-semibold" : ""}`}>
-            {label}
-          </span>
-        </a>
-      ))}
-    </aside>
   );
 }
