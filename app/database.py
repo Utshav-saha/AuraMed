@@ -10,11 +10,13 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY2 = os.getenv("GEMINI_API_KEY2")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Initialize Clients
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+gemini_client2 = genai.Client(api_key=GEMINI_API_KEY2)
 
 # Load Local Model
 print("Loading semantic text embedding model into memory...")

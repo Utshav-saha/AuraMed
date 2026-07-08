@@ -24,8 +24,11 @@ const NAV_ITEMS = [
 const DELIVERY_FEE = 2.5;
 const TAX_RATE = 0.05;
 
-// ── Shared layout components ──────────────────────────────────
-function NavBar({ logout }: { logout: () => void }) {
+// ── NavBar ─────────────────────────────────────────────────────
+function NavBar({ logout, patientName }: { logout: () => void; patientName?: string }) {
+  const displayName = patientName || "Guest";
+  const avatarInitial = displayName.charAt(0).toUpperCase() || "A";
+
   return (
     <header className="h-16 bg-white/70 backdrop-blur-md border-b border-zinc-200 flex items-center justify-between px-8 shrink-0 z-10">
       <div className="lg:hidden flex items-center gap-2.5">
@@ -34,7 +37,7 @@ function NavBar({ logout }: { logout: () => void }) {
         </div>
         <span className="text-base font-bold tracking-tight text-zinc-900">AuraMed</span>
       </div>
-      <div className="hidden lg:block" /> {/* Spacer */}
+      <div className="hidden lg:block" />
       <div className="flex items-center gap-3">
         <button className="relative w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-100 transition-colors">
           <Bell size={18} className="text-zinc-500 hover:text-zinc-900" />
@@ -44,8 +47,8 @@ function NavBar({ logout }: { logout: () => void }) {
           <Settings size={18} className="text-zinc-500 hover:text-zinc-900" />
         </button>
         <div className="w-px h-5 bg-zinc-200 mx-1" />
-        <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm border border-indigo-700 ml-1 cursor-default">
-          A
+        <div title={displayName} className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm border border-indigo-700 ml-1 cursor-default">
+          {avatarInitial}
         </div>
         <button onClick={logout} title="Log out" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-red-50 text-zinc-400 hover:text-red-600 transition-colors ml-1">
           <LogOut size={16} />
@@ -54,7 +57,6 @@ function NavBar({ logout }: { logout: () => void }) {
     </header>
   );
 }
-
 function Sidebar() {
   return (
     <aside className="hidden lg:flex w-64 bg-white border-r border-zinc-200 flex-col shrink-0 z-20 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
@@ -200,8 +202,8 @@ export default function CartPage() {
       <div className="flex h-screen bg-[#FAFAFA] font-sans text-zinc-900 overflow-hidden selection:bg-indigo-100 selection:text-indigo-900">
         <Sidebar />
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-          <NavBar logout={logout} />
-          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
+          <NavBar logout={logout} patientName={patient?.name} />
+          <div className="absolute top-0 right-0 w-125 h-125 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
           <main className="flex-1 flex items-center justify-center p-8">
             <div className="bg-white rounded-3xl shadow-sm border border-zinc-200 p-12 max-w-md w-full flex flex-col items-center text-center">
               <div className="w-20 h-20 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mb-6">
@@ -232,10 +234,10 @@ export default function CartPage() {
       <Sidebar />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-        <NavBar logout={logout} />
+        {/* FIX: Passed the patient name from the auth context down to the NavBar */}
+        <NavBar logout={logout} patientName={patient?.name} />
         {/* Subtle background glow */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
-
+        <div className="absolute top-0 right-0 w-125 h-125 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
         {/* ── Main Content ── */}
         <main className="flex-1 overflow-y-auto p-8 lg:p-12">
           <div className="max-w-6xl mx-auto flex flex-col lg:flex-row gap-8 items-start">
@@ -293,7 +295,7 @@ export default function CartPage() {
                       className="bg-white rounded-3xl border border-zinc-200 p-6 flex flex-col sm:flex-row sm:items-center gap-6 shadow-sm hover:shadow-md transition-all"
                     >
                       {/* Medicine icon */}
-                      <div className="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0 hidden sm:flex">
+                      <div className="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0 sm:flex">
                         <Pill size={24} className="text-indigo-600" />
                       </div>
 
@@ -337,7 +339,7 @@ export default function CartPage() {
                         </div>
 
                         {/* Price */}
-                        <div className="text-right shrink-0 min-w-[4rem]">
+                        <div className="text-right shrink-0 min-w-16">
                           <p className="text-lg font-bold text-zinc-900 tabular-nums">
                             {fmt(item.unit_price * item.count)}
                           </p>
@@ -441,7 +443,7 @@ export default function CartPage() {
             </div>
 
             {/* ── Order Summary Sidebar ── */}
-            <div className="w-full lg:w-[360px] shrink-0 flex flex-col gap-6">
+            <div className="w-full lg:w-90 shrink-0 flex flex-col gap-6">
               <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-8 flex flex-col gap-6">
                 <h2 className="text-lg font-bold text-zinc-900">Order Summary</h2>
 

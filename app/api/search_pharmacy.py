@@ -8,8 +8,6 @@ from app.database import supabase, DATABASE_URL
 
 router = APIRouter()
 
-
-# ── Raw RPC row (returned by find_nearby_pharmacy) ─────────────
 class SearchResponse(BaseModel):
     pharmacy_id: int
     pharmacy_name: str
@@ -20,8 +18,6 @@ class SearchResponse(BaseModel):
     stock_count: int
     is_exact_match: bool
 
-
-# ── Request ─────────────────────────────────────────────────────
 class SearchRequest(BaseModel):
     user_lat: float
     user_lng: float
@@ -30,13 +26,13 @@ class SearchRequest(BaseModel):
     target_dosage_forms: list[int]
     target_quantities: list[int]
 
-
 # ── Response models ─────────────────────────────────────────────
 class CartItem(BaseModel):
     provided_medicine_id: int
+    provided_medicine_name: str
+    target_medicine_id: int
     is_exact: bool
     stock_count: int
-
 
 class OneStopShop(BaseModel):
     pharmacy_id: int
@@ -44,18 +40,19 @@ class OneStopShop(BaseModel):
     distance_meters: float
     items: List[CartItem]
 
-
 class MultiStopItem(BaseModel):
-    medicine_id: int
+    target_medicine_id: int
+    provided_medicine_id: int
+    provided_medicine_name: str
     pharmacy_name: str
     distance_meters: float
 
-
 class AvailableMed(BaseModel):
-    medicine_id: int
+    provided_medicine_id: int
+    provided_medicine_name: str
+    target_medicine_id: int
     stock_count: int
     is_exact: bool
-
 
 class PartialMatch(BaseModel):
     pharmacy_id: int
@@ -64,23 +61,20 @@ class PartialMatch(BaseModel):
     available_medicines: List[AvailableMed]
     medicine_count: int
 
-
 class CartResult(BaseModel):
     one_stop_options: List[OneStopShop]
     multi_stop_route: List[MultiStopItem]
     partial_matches: List[PartialMatch]
 
 
-# ── Endpoints ───────────────────────────────────────────────────
 
 @router.post("/search-pharmacies", response_model=CartResult)
 async def search_pharmacies(request: SearchRequest):
-    conn = await asyncpg.connect(DATABASE_URL,
-                                 statement_cache_size=0)
+    conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
     try:
         generic_rows = await conn.fetch(
             """
-            SELECT COALESCE(m.generic_id, 0) AS generic_id
+            SELECT u.id as target_med_id, COALESCE(m.generic_id, 0) AS generic_id
             FROM unnest($1::bigint[]) WITH ORDINALITY AS u(id, ord)
             LEFT JOIN medicines m ON m.id = u.id
             ORDER BY u.ord
@@ -88,6 +82,8 @@ async def search_pharmacies(request: SearchRequest):
             request.target_medicine_ids,
         )
         generic_ids_list = [r["generic_id"] for r in generic_rows]
+        
+        generic_to_target_med = {r["generic_id"]: r["target_med_id"] for r in generic_rows if r["generic_id"] != 0}
 
         response = supabase.rpc("find_nearby_pharmacy", {
             "user_lat": request.user_lat,
@@ -102,12 +98,29 @@ async def search_pharmacies(request: SearchRequest):
         data = response.data
         total_count = len(request.target_medicine_ids)
 
-        # Group all RPC rows by pharmacy_id
+        all_avail_ids = list(set(row["available_medicine_id"] for row in data))
+        med_names = {}
+        if all_avail_ids:
+            med_rows = await conn.fetch(
+                "SELECT id, brand_name, strength FROM medicines WHERE id = ANY($1::bigint[])",
+                all_avail_ids
+            )
+            for r in med_rows:
+                name = r["brand_name"]
+                if r["strength"]:
+                    name += f" {r['strength']}"
+                med_names[r["id"]] = name
+
         pharmacy_groups: dict[int, list] = defaultdict(list)
         for row in data:
             pharmacy_groups[row["pharmacy_id"]].append(row)
 
-        # ── One-stop shop options (all requested medicines present) ──
+        def get_target_med_id(row):
+            if row["is_exact_match"]:
+                return row["available_medicine_id"]
+            return generic_to_target_med.get(row["available_generic_id"], row["available_medicine_id"])
+
+        # ── One-stop shop options ──
         one_stop_options: List[OneStopShop] = []
         for pharm_id, items in pharmacy_groups.items():
             unique_generics = set(item["available_generic_id"] for item in items)
@@ -119,6 +132,8 @@ async def search_pharmacies(request: SearchRequest):
                     items=[
                         CartItem(
                             provided_medicine_id=item["available_medicine_id"],
+                            provided_medicine_name=med_names.get(item["available_medicine_id"], "Unknown"),
+                            target_medicine_id=get_target_med_id(item),
                             is_exact=item["is_exact_match"],
                             stock_count=item["stock_count"],
                         )
@@ -129,7 +144,7 @@ async def search_pharmacies(request: SearchRequest):
         one_stop_options.sort(key=lambda x: x.distance_meters)
         one_stop_options = one_stop_options[:5]
 
-        # ── Multi-stop route (one pharmacy per medicine, exact matches only) ──
+        # ── Multi-stop route ──
         exact_matches = [row for row in data if row["is_exact_match"]]
         medicine_groups: dict[int, list] = defaultdict(list)
         for row in exact_matches:
@@ -140,20 +155,25 @@ async def search_pharmacies(request: SearchRequest):
             locations.sort(key=lambda x: x["distance_meters"])
             closest = locations[0]
             multi_stop_route.append(MultiStopItem(
-                medicine_id=med_id,
+                target_medicine_id=med_id,
+                provided_medicine_id=med_id,
+                provided_medicine_name=med_names.get(med_id, "Unknown"),
                 pharmacy_name=closest["pharmacy_name"],
                 distance_meters=closest["distance_meters"],
             ))
 
-        # ── Partial matches (any pharmacy with ≥1 requested medicine) ──
+        # ── Partial matches ──
         partial_matches: List[PartialMatch] = []
         for pharm_id, items in pharmacy_groups.items():
             seen_meds: dict[int, AvailableMed] = {}
             for item in items:
+                target_id = get_target_med_id(item)
                 mid = item["available_medicine_id"]
-                if mid not in seen_meds:
-                    seen_meds[mid] = AvailableMed(
-                        medicine_id=mid,
+                if target_id not in seen_meds:
+                    seen_meds[target_id] = AvailableMed(
+                        provided_medicine_id=mid,
+                        provided_medicine_name=med_names.get(mid, "Unknown"),
+                        target_medicine_id=target_id,
                         stock_count=item["stock_count"],
                         is_exact=item["is_exact_match"],
                     )
@@ -178,7 +198,6 @@ async def search_pharmacies(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Database Error: {str(e)}")
     finally:
         await conn.close()
-
 
 @router.get("/search-by-name")
 async def search_pharmacies_by_name(q: str, limit: int = 5):

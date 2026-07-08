@@ -7,7 +7,7 @@ from google.genai import types
 from PIL import Image
 from pydantic import BaseModel
 
-from app.database import DATABASE_URL, gemini_client, model, supabase
+from app.database import DATABASE_URL, gemini_client2, model, supabase
 
 router = APIRouter()
 
@@ -126,7 +126,7 @@ def _extract_prescription_data(image_bytes: bytes, mime_type: str) -> Prescripti
         "Return only valid JSON matching the schema. If a field cannot be determined, use null."
     )
 
-    response = gemini_client.models.generate_content(
+    response = gemini_client2.models.generate_content(
         model="gemini-2.5-flash",
         contents=[
             types.Part.from_bytes(data=image_bytes, mime_type=mime_type),

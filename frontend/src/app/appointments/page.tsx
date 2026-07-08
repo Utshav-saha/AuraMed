@@ -1,13 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Bell, Settings, Calendar, MapPin, Calculator, ShoppingCart,
   Clock, Stethoscope, Plus, X, Loader2, CheckCircle2, AlertTriangle,
-  LayoutDashboard, Pill, LogOut, HeartPulse, Video, Building2,
-  CalendarClock, ChevronRight,
+  LayoutDashboard, Pill, LogOut, HeartPulse, Building2,
+  CalendarClock, Search,
 } from "lucide-react";
 import { useRequireAuth } from "@/lib/auth-context";
+import {
+  api,
+  type BookedAppointment,
+  type DoctorSearchResult,
+  type DoctorAvailability,
+} from "@/lib/api";
 
 // ── Nav items ──────────────────────────────────────────────────
 const NAV_ITEMS = [
@@ -19,83 +25,34 @@ const NAV_ITEMS = [
   { icon: ShoppingCart, label: "Cart", href: "/cart" },
 ];
 
-// ── Types ──────────────────────────────────────────────────────
-type Mode = "in_person" | "video";
-type Status = "upcoming" | "completed" | "cancelled";
-
-interface Appointment {
-  id: number;
-  doctorName: string;
-  specialization: string;
-  date: string; // ISO date (yyyy-mm-dd)
-  time: string; // e.g. "09:30 AM"
-  mode: Mode;
-  location: string;
-  reason: string;
-  status: Status;
-}
-
-interface Doctor {
-  id: number;
-  name: string;
-  specialization: string;
-  location: string;
-}
-
-// ── Placeholder data (no appointments backend yet) ─────────────
-const DOCTORS: Doctor[] = [
-  { id: 1, name: "Dr. Ayesha Rahman", specialization: "General Physician", location: "AuraMed Clinic, Dhanmondi" },
-  { id: 2, name: "Dr. Imran Hossain", specialization: "Cardiologist", location: "Heart Care Center, Gulshan" },
-  { id: 3, name: "Dr. Nadia Karim", specialization: "Dermatologist", location: "SkinWell, Banani" },
-  { id: 4, name: "Dr. Sajid Alam", specialization: "Pediatrician", location: "Children's Health, Uttara" },
-];
-
-const INITIAL_APPOINTMENTS: Appointment[] = [
-  {
-    id: 1,
-    doctorName: "Dr. Ayesha Rahman",
-    specialization: "General Physician",
-    date: "2026-07-08",
-    time: "09:30 AM",
-    mode: "in_person",
-    location: "AuraMed Clinic, Dhanmondi",
-    reason: "Routine check-up & blood pressure review",
-    status: "upcoming",
-  },
-  {
-    id: 2,
-    doctorName: "Dr. Imran Hossain",
-    specialization: "Cardiologist",
-    date: "2026-07-15",
-    time: "02:00 PM",
-    mode: "video",
-    location: "Video consultation",
-    reason: "Follow-up on ECG results",
-    status: "upcoming",
-  },
-  {
-    id: 3,
-    doctorName: "Dr. Nadia Karim",
-    specialization: "Dermatologist",
-    date: "2026-06-12",
-    time: "11:00 AM",
-    mode: "in_person",
-    location: "SkinWell, Banani",
-    reason: "Skin allergy consultation",
-    status: "completed",
-  },
-];
-
-const TIME_OPTIONS = [
-  "09:00 AM", "09:30 AM", "10:00 AM", "10:30 AM", "11:00 AM",
-  "11:30 AM", "02:00 PM", "02:30 PM", "03:00 PM", "03:30 PM", "04:00 PM",
-];
-
 // ── Helpers ────────────────────────────────────────────────────
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-US", {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", {
     weekday: "short", day: "numeric", month: "short", year: "numeric",
   });
+}
+
+// "14:30:00" → "2:30 PM"
+function formatTime(t: string) {
+  const [hStr, mStr] = t.split(":");
+  const h = parseInt(hStr, 10);
+  if (Number.isNaN(h)) return t;
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${mStr ?? "00"} ${ampm}`;
+}
+
+// Parse a free-text time_slot (e.g. "09:30 AM", "14:00", "9 AM - 11 AM")
+// into the "HH:MM:SS" the booking endpoint expects. Uses the first time found.
+function slotToTime(timeSlot: string): string {
+  const m = timeSlot.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if (!m) return "09:00:00";
+  let h = parseInt(m[1], 10);
+  const min = m[2] ?? "00";
+  const ampm = m[3]?.toLowerCase();
+  if (ampm === "pm" && h !== 12) h += 12;
+  if (ampm === "am" && h === 12) h = 0;
+  return `${String(h).padStart(2, "0")}:${min}:00`;
 }
 
 // ── Sidebar ────────────────────────────────────────────────────
@@ -159,30 +116,8 @@ function NavBar({ logout, avatarInitial, displayName }: { logout: () => void; av
   );
 }
 
-// ── Status badge ───────────────────────────────────────────────
-function StatusBadge({ status }: { status: Status }) {
-  const styles: Record<Status, string> = {
-    upcoming: "bg-indigo-50 text-indigo-700 border-indigo-100",
-    completed: "bg-emerald-50 text-emerald-700 border-emerald-100",
-    cancelled: "bg-zinc-100 text-zinc-500 border-zinc-200",
-  };
-  const labels: Record<Status, string> = {
-    upcoming: "Upcoming",
-    completed: "Completed",
-    cancelled: "Cancelled",
-  };
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border shadow-sm ${styles[status]}`}>
-      {labels[status]}
-    </span>
-  );
-}
-
 // ── Appointment card ───────────────────────────────────────────
-function AppointmentCard({ appt, onCancel }: { appt: Appointment; onCancel: (id: number) => void }) {
-  const ModeIcon = appt.mode === "video" ? Video : Building2;
-  const isUpcoming = appt.status === "upcoming";
-
+function AppointmentCard({ appt, past }: { appt: BookedAppointment; past: boolean }) {
   return (
     <div className="bg-white rounded-3xl border border-zinc-200 p-6 flex flex-col sm:flex-row sm:items-start justify-between gap-6 shadow-sm hover:shadow-md transition-all">
       <div className="flex-1 min-w-0">
@@ -192,10 +127,22 @@ function AppointmentCard({ appt, onCancel }: { appt: Appointment; onCancel: (id:
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2.5 flex-wrap">
-              <p className="text-lg font-bold text-zinc-900">{appt.doctorName}</p>
-              <StatusBadge status={appt.status} />
+              <p className="text-lg font-bold text-zinc-900">
+                {appt.doctors?.name ?? "Doctor"}
+              </p>
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border shadow-sm ${
+                  past
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                    : "bg-indigo-50 text-indigo-700 border-indigo-100"
+                }`}
+              >
+                {past ? "Completed" : "Upcoming"}
+              </span>
             </div>
-            <p className="text-sm text-zinc-500 font-medium mt-0.5">{appt.specialization}</p>
+            {appt.doctors?.specialization && (
+              <p className="text-sm text-zinc-500 font-medium mt-0.5">{appt.doctors.specialization}</p>
+            )}
           </div>
         </div>
 
@@ -206,37 +153,10 @@ function AppointmentCard({ appt, onCancel }: { appt: Appointment; onCancel: (id:
           </span>
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700 bg-zinc-50 px-3 py-1.5 rounded-full border border-zinc-200">
             <Clock size={13} className="text-zinc-400" />
-            {appt.time}
-          </span>
-          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700 bg-zinc-50 px-3 py-1.5 rounded-full border border-zinc-200">
-            <ModeIcon size={13} className="text-zinc-400" />
-            {appt.location}
+            {formatTime(appt.time)}
           </span>
         </div>
-
-        {appt.reason && (
-          <p className="text-sm text-zinc-500 mt-4 leading-relaxed">
-            <span className="font-semibold text-zinc-700">Reason:</span> {appt.reason}
-          </p>
-        )}
       </div>
-
-      {isUpcoming && (
-        <div className="flex sm:flex-col gap-2 shrink-0">
-          {appt.mode === "video" && (
-            <button className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-zinc-900 text-white text-sm font-semibold rounded-xl hover:bg-zinc-800 transition-all shadow-md active:scale-95">
-              <Video size={16} />
-              Join
-            </button>
-          )}
-          <button
-            onClick={() => onCancel(appt.id)}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-zinc-200 text-zinc-700 text-sm font-semibold rounded-xl hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-colors shadow-sm"
-          >
-            Cancel
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -244,81 +164,108 @@ function AppointmentCard({ appt, onCancel }: { appt: Appointment; onCancel: (id:
 // ── Main Page ──────────────────────────────────────────────────
 export default function AppointmentsPage() {
   const { logout, patient } = useRequireAuth();
+  const patientId = patient?.id ?? 1; // placeholder fallback for guest mode
   const displayName = patient?.name ?? "there";
   const avatarInitial = displayName.charAt(0).toUpperCase() || "A";
 
-  const [appointments, setAppointments] = useState<Appointment[]>(INITIAL_APPOINTMENTS);
   const [tab, setTab] = useState<"upcoming" | "past">("upcoming");
-  const [bookOpen, setBookOpen] = useState(false);
-  const [cancelConfirm, setCancelConfirm] = useState<number | null>(null);
+  const [upcoming, setUpcoming] = useState<BookedAppointment[]>([]);
+  const [past, setPast] = useState<BookedAppointment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Booking form state
-  const [doctorId, setDoctorId] = useState<number | null>(null);
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("");
-  const [mode, setMode] = useState<Mode>("in_person");
-  const [reason, setReason] = useState("");
+  // Booking overlay state
+  const [bookOpen, setBookOpen] = useState(false);
+  const [doctorQuery, setDoctorQuery] = useState("");
+  const [doctors, setDoctors] = useState<DoctorSearchResult[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [selectedSlot, setSelectedSlot] = useState<{ doctor: DoctorSearchResult; slot: DoctorAvailability } | null>(null);
   const [booking, setBooking] = useState(false);
+  const [bookSuccess, setBookSuccess] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const filtered = useMemo(
-    () =>
-      appointments
-        .filter((a) => (tab === "upcoming" ? a.status === "upcoming" : a.status !== "upcoming"))
-        .sort((a, b) => (tab === "upcoming" ? +new Date(a.date) - +new Date(b.date) : +new Date(b.date) - +new Date(a.date))),
-    [appointments, tab]
-  );
+  const reload = useCallback(async () => {
+    await Promise.resolve();
+    setLoadError(null);
+    try {
+      const [up, pa] = await Promise.all([
+        api.myAppointments(patientId, "upcoming"),
+        api.myAppointments(patientId, "past"),
+      ]);
+      setUpcoming(up);
+      setPast(pa);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Couldn't load appointments.");
+    } finally {
+      setLoading(false);
+    }
+  }, [patientId]);
 
-  const upcomingCount = appointments.filter((a) => a.status === "upcoming").length;
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void reload();
+    }, 0);
 
-  const resetForm = () => {
-    setDoctorId(null);
-    setDate("");
-    setTime("");
-    setMode("in_person");
-    setReason("");
+    return () => window.clearTimeout(timer);
+  }, [reload]);
+
+  const shown = tab === "upcoming" ? upcoming : past;
+
+  // ── Booking flow ────────────────────────────────────────────
+  const searchDoctors = async () => {
+    setSearching(true);
     setFormError(null);
+    try {
+      setDoctors(await api.searchDoctors(doctorQuery.trim() || undefined));
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Doctor search failed.");
+      setDoctors([]);
+    } finally {
+      setSearching(false);
+    }
   };
 
   const openBooking = () => {
-    resetForm();
+    setDoctorQuery("");
+    setDoctors(null);
+    setSelectedSlot(null);
+    setFormError(null);
+    setBookSuccess(false);
     setBookOpen(true);
+    // Load all available doctors immediately
+    setSearching(true);
+    api.searchDoctors()
+      .then(setDoctors)
+      .catch(() => setDoctors([]))
+      .finally(() => setSearching(false));
   };
 
   const handleBook = async () => {
-    if (doctorId == null) return setFormError("Please choose a doctor.");
-    if (!date) return setFormError("Please pick a date.");
-    if (!time) return setFormError("Please pick a time.");
+    if (!selectedSlot) return setFormError("Pick an available time slot first.");
+    const { doctor, slot } = selectedSlot;
+    if (!slot.hospitals) return setFormError("This slot has no hospital attached.");
 
-    const doctor = DOCTORS.find((d) => d.id === doctorId)!;
     setBooking(true);
     setFormError(null);
-
-    // Simulate a network call — no appointments backend yet
-    await new Promise((r) => setTimeout(r, 700));
-
-    setAppointments((prev) => [
-      ...prev,
-      {
-        id: Math.max(0, ...prev.map((a) => a.id)) + 1,
-        doctorName: doctor.name,
-        specialization: doctor.specialization,
-        date,
-        time,
-        mode,
-        location: mode === "video" ? "Video consultation" : doctor.location,
-        reason: reason.trim(),
-        status: "upcoming",
-      },
-    ]);
-    setBooking(false);
-    setBookOpen(false);
-    setTab("upcoming");
-  };
-
-  const handleCancel = (id: number) => {
-    setAppointments((prev) => prev.map((a) => (a.id === id ? { ...a, status: "cancelled" } : a)));
-    setCancelConfirm(null);
+    try {
+      await api.bookAppointment({
+        patient_id: patientId,
+        doctor_id: doctor.id,
+        hospital_id: slot.hospitals.id,
+        appointment_date: slot.date ?? new Date().toISOString().split("T")[0],
+        appointment_time: slotToTime(slot.time_slot),
+        availability_id: slot.id,
+      });
+      setBookSuccess(true);
+      setLoading(true);
+      await reload();
+      setTab("upcoming");
+      setTimeout(() => setBookOpen(false), 1200);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Booking failed. Please try again.");
+    } finally {
+      setBooking(false);
+    }
   };
 
   return (
@@ -328,7 +275,7 @@ export default function AppointmentsPage() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         <NavBar logout={logout} avatarInitial={avatarInitial} displayName={displayName} />
         {/* Subtle background glow */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
+        <div className="absolute top-0 right-0 w-125 h-125 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
 
         <main className="flex-1 overflow-y-auto p-8 lg:p-12">
           <div className="max-w-4xl mx-auto flex flex-col gap-6">
@@ -338,7 +285,7 @@ export default function AppointmentsPage() {
               <div>
                 <h1 className="text-3xl font-bold text-zinc-900 tracking-tight">Appointments</h1>
                 <p className="text-sm text-zinc-500 mt-2">
-                  Book, view, and manage your doctor appointments.
+                  Book and view your doctor appointments.
                 </p>
               </div>
               <button
@@ -356,9 +303,9 @@ export default function AppointmentsPage() {
                 <CalendarClock size={22} className="text-indigo-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-zinc-900 leading-none">{upcomingCount}</p>
+                <p className="text-2xl font-bold text-zinc-900 leading-none">{upcoming.length}</p>
                 <p className="text-sm text-zinc-500 font-medium mt-1">
-                  {upcomingCount === 1 ? "upcoming appointment" : "upcoming appointments"}
+                  {upcoming.length === 1 ? "upcoming appointment" : "upcoming appointments"}
                 </p>
               </div>
             </div>
@@ -378,8 +325,20 @@ export default function AppointmentsPage() {
               ))}
             </div>
 
+            {loadError && (
+              <p className="text-sm font-semibold text-red-600 bg-red-50 p-3 rounded-xl border border-red-100 flex items-center gap-2">
+                <AlertTriangle size={16} />
+                {loadError}
+              </p>
+            )}
+
             {/* ── List ── */}
-            {filtered.length === 0 ? (
+            {loading ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center py-20">
+                <Loader2 size={32} className="text-indigo-500 animate-spin" />
+                <p className="text-sm font-medium text-zinc-500">Loading your appointments…</p>
+              </div>
+            ) : shown.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center py-20">
                 <div className="w-16 h-16 rounded-3xl bg-indigo-50 border border-indigo-100 flex items-center justify-center">
                   <Calendar size={28} className="text-indigo-400" />
@@ -390,7 +349,7 @@ export default function AppointmentsPage() {
                 <p className="text-sm text-zinc-500 max-w-xs leading-relaxed">
                   {tab === "upcoming"
                     ? "Book an appointment with one of our doctors to get started."
-                    : "Your completed and cancelled appointments will appear here."}
+                    : "Your completed appointments will appear here."}
                 </p>
                 {tab === "upcoming" && (
                   <button
@@ -404,8 +363,8 @@ export default function AppointmentsPage() {
               </div>
             ) : (
               <div className="flex flex-col gap-4 pb-12">
-                {filtered.map((appt) => (
-                  <AppointmentCard key={appt.id} appt={appt} onCancel={setCancelConfirm} />
+                {shown.map((appt) => (
+                  <AppointmentCard key={appt.id} appt={appt} past={tab === "past"} />
                 ))}
               </div>
             )}
@@ -424,7 +383,9 @@ export default function AppointmentsPage() {
             <div className="flex items-start justify-between px-6 pt-6 pb-4 shrink-0 bg-white border-b border-zinc-100">
               <div>
                 <h2 className="text-xl font-bold text-zinc-900">Book Appointment</h2>
-                <p className="text-sm font-medium text-zinc-500 mt-1">Choose a doctor and a convenient time.</p>
+                <p className="text-sm font-medium text-zinc-500 mt-1">
+                  Search a doctor or specialization, then pick a slot.
+                </p>
               </div>
               <button
                 onClick={() => !booking && setBookOpen(false)}
@@ -435,152 +396,138 @@ export default function AppointmentsPage() {
             </div>
 
             {/* Body */}
-            <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-6 bg-zinc-50/50">
-              {/* Doctor select */}
-              <div>
-                <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3">Doctor</p>
-                <div className="flex flex-col gap-2">
-                  {DOCTORS.map((doc) => {
-                    const selected = doctorId === doc.id;
+            <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-5 bg-zinc-50/50">
+              {bookSuccess ? (
+                <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
+                  <div className="w-20 h-20 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center">
+                    <CheckCircle2 size={40} className="text-emerald-500" />
+                  </div>
+                  <div>
+                    <p className="text-lg font-bold text-zinc-900">Appointment Booked!</p>
+                    <p className="text-sm font-medium text-zinc-500 mt-1">See it under your upcoming appointments.</p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Doctor search */}
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none z-10" />
+                      <input
+                        type="text"
+                        value={doctorQuery}
+                        onChange={(e) => setDoctorQuery(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") searchDoctors(); }}
+                        placeholder="Doctor name or specialization…"
+                        className="w-full h-11 pl-11 pr-4 bg-white border border-zinc-200 rounded-xl text-sm font-medium text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-sm"
+                      />
+                    </div>
+                    <button
+                      onClick={searchDoctors}
+                      disabled={searching}
+                      className="px-5 bg-zinc-900 text-white text-sm font-bold rounded-xl hover:bg-zinc-800 transition-all shadow-sm disabled:opacity-60 shrink-0 flex items-center gap-2"
+                    >
+                      {searching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                    </button>
+                  </div>
+
+                  {/* Doctor results with slots */}
+                  {searching && (
+                    <div className="flex items-center justify-center gap-2 text-sm text-zinc-500 py-8">
+                      <Loader2 size={16} className="animate-spin" /> Finding available doctors…
+                    </div>
+                  )}
+
+                  {!searching && doctors && doctors.length === 0 && (
+                    <p className="text-sm text-zinc-500 text-center py-8">
+                      No doctors with available slots found. Try a different search.
+                    </p>
+                  )}
+
+                  {!searching && doctors && doctors.map((doc) => {
+                    const slots = doc.hospital_doctor_availability.filter(
+                      (s) => s.available_slots > 0 && s.hospitals
+                    );
+                    if (slots.length === 0) return null;
                     return (
-                      <button
-                        key={doc.id}
-                        onClick={() => setDoctorId(doc.id)}
-                        className={`flex items-center gap-3 px-4 py-3 rounded-2xl border text-left transition-all ${
-                          selected
-                            ? "bg-indigo-50/50 border-indigo-200 shadow-sm"
-                            : "bg-white border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50"
-                        }`}
-                      >
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${selected ? "bg-indigo-600" : "bg-zinc-50 border border-zinc-100"}`}>
-                          <Stethoscope size={18} className={selected ? "text-white" : "text-indigo-500"} />
+                      <div key={doc.id} className="bg-white border border-zinc-200 rounded-2xl shadow-sm overflow-hidden">
+                        <div className="px-5 py-3.5 border-b border-zinc-100 bg-zinc-50/50 flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0">
+                            <Stethoscope size={16} className="text-indigo-600" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-zinc-900 truncate">{doc.name}</p>
+                            {doc.specialization && (
+                              <p className="text-xs text-zinc-500 truncate">{doc.specialization}</p>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm font-bold ${selected ? "text-indigo-900" : "text-zinc-900"}`}>{doc.name}</p>
-                          <p className="text-xs text-zinc-500 mt-0.5">{doc.specialization} · {doc.location}</p>
+                        <div className="p-4 flex flex-col gap-2">
+                          {slots.map((slot) => {
+                            const isSelected = selectedSlot?.slot.id === slot.id;
+                            return (
+                              <button
+                                key={slot.id}
+                                onClick={() => setSelectedSlot({ doctor: doc, slot })}
+                                className={`flex items-center justify-between gap-3 px-4 py-3 rounded-xl border text-left transition-all ${
+                                  isSelected
+                                    ? "bg-indigo-50/60 border-indigo-300 shadow-sm"
+                                    : "bg-white border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50"
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <p className={`text-sm font-bold ${isSelected ? "text-indigo-900" : "text-zinc-900"}`}>
+                                    {slot.date ? formatDate(slot.date) : "Any day"} · {slot.time_slot}
+                                  </p>
+                                  <p className="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 truncate">
+                                    <Building2 size={12} className="shrink-0" />
+                                    {slot.hospitals!.name}
+                                  </p>
+                                </div>
+                                <span className={`text-xs font-bold px-2.5 py-1 rounded-full border shrink-0 ${
+                                  isSelected
+                                    ? "bg-indigo-600 text-white border-indigo-600"
+                                    : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                }`}>
+                                  {isSelected ? "Selected" : `${slot.available_slots} left`}
+                                </span>
+                              </button>
+                            );
+                          })}
                         </div>
-                        {selected && <CheckCircle2 size={18} className="text-indigo-600 shrink-0" />}
-                        {!selected && <ChevronRight size={16} className="text-zinc-300 shrink-0" />}
-                      </button>
+                      </div>
                     );
                   })}
-                </div>
-              </div>
 
-              {/* Mode toggle */}
-              <div>
-                <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3">Visit type</p>
-                <div className="flex items-center bg-zinc-100 rounded-xl p-1 gap-1 border border-zinc-200">
-                  {(["in_person", "video"] as const).map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setMode(m)}
-                      className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                        mode === m ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-900"
-                      }`}
-                    >
-                      {m === "in_person" ? <Building2 size={15} /> : <Video size={15} />}
-                      {m === "in_person" ? "In person" : "Video call"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Date & time */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3">Date</p>
-                  <input
-                    type="date"
-                    value={date}
-                    min={new Date().toISOString().split("T")[0]}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="w-full h-12 px-4 bg-white border border-zinc-200 rounded-2xl text-sm font-medium text-zinc-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-sm"
-                  />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3">Time</p>
-                  <select
-                    value={time}
-                    onChange={(e) => setTime(e.target.value)}
-                    className="w-full h-12 px-4 bg-white border border-zinc-200 rounded-2xl text-sm font-medium text-zinc-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-sm appearance-none"
-                  >
-                    <option value="">Select a time…</option>
-                    {TIME_OPTIONS.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Reason */}
-              <div>
-                <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3">Reason <span className="text-zinc-300 normal-case font-medium tracking-normal">(optional)</span></p>
-                <textarea
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  rows={3}
-                  placeholder="Briefly describe your symptoms or purpose of visit…"
-                  className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-sm resize-none"
-                />
-              </div>
-
-              {formError && (
-                <p className="text-sm font-semibold text-red-600 bg-red-50 p-3 rounded-xl border border-red-100 flex items-center gap-2">
-                  <AlertTriangle size={16} />
-                  {formError}
-                </p>
+                  {formError && (
+                    <p className="text-sm font-semibold text-red-600 bg-red-50 p-3 rounded-xl border border-red-100 flex items-center gap-2">
+                      <AlertTriangle size={16} />
+                      {formError}
+                    </p>
+                  )}
+                </>
               )}
             </div>
 
             {/* Footer */}
-            <div className="px-6 py-5 shrink-0 bg-white border-t border-zinc-100 flex gap-4">
-              <button
-                onClick={() => !booking && setBookOpen(false)}
-                className="flex-1 py-3 bg-white border border-zinc-200 text-zinc-700 text-sm font-bold rounded-xl hover:bg-zinc-50 transition-colors shadow-sm"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleBook}
-                disabled={booking}
-                className="flex-1 py-3 bg-zinc-900 text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all shadow-md active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
-              >
-                {booking ? <Loader2 size={16} className="animate-spin" /> : <CalendarClock size={16} />}
-                {booking ? "Booking…" : "Confirm Booking"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Cancel Confirm Overlay ─────────────────────────────── */}
-      {cancelConfirm != null && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xs p-8">
-            <div className="flex flex-col items-center text-center gap-3">
-              <div className="w-14 h-14 rounded-full bg-red-50 border border-red-100 flex items-center justify-center mb-1">
-                <AlertTriangle size={24} className="text-red-600" />
-              </div>
-              <h3 className="text-lg font-bold text-zinc-900">Cancel Appointment?</h3>
-              <p className="text-sm text-zinc-500 leading-relaxed">
-                This appointment will be cancelled. You can always book a new one.
-              </p>
-              <div className="flex gap-3 w-full mt-5">
+            {!bookSuccess && (
+              <div className="px-6 py-5 shrink-0 bg-white border-t border-zinc-100 flex gap-4">
                 <button
-                  onClick={() => setCancelConfirm(null)}
-                  className="flex-1 py-2.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 text-sm font-semibold rounded-xl transition-colors shadow-sm"
+                  onClick={() => !booking && setBookOpen(false)}
+                  className="flex-1 py-3 bg-white border border-zinc-200 text-zinc-700 text-sm font-bold rounded-xl hover:bg-zinc-50 transition-colors shadow-sm"
                 >
-                  Keep
+                  Cancel
                 </button>
                 <button
-                  onClick={() => handleCancel(cancelConfirm)}
-                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-xl transition-all shadow-sm active:scale-95"
+                  onClick={handleBook}
+                  disabled={booking || !selectedSlot}
+                  className="flex-1 py-3 bg-zinc-900 text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all shadow-md active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
                 >
-                  Cancel It
+                  {booking ? <Loader2 size={16} className="animate-spin" /> : <CalendarClock size={16} />}
+                  {booking ? "Booking…" : "Confirm Booking"}
                 </button>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}

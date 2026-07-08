@@ -773,7 +773,7 @@ export default function DashboardPage() {
       {/* ── Main Canvas ─────────────────────────────────────── */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         {/* Subtle background glow */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
+        <div className="absolute top-0 right-0 w-125 h-125 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
 
         {/* ── Top Header ───────────────────────────────────── */}
         <header className="h-16 bg-white/70 backdrop-blur-md border-b border-zinc-200 flex items-center justify-between px-8 shrink-0 z-10">
@@ -887,7 +887,7 @@ export default function DashboardPage() {
                   >
                     <ChevronLeft size={16} />
                   </button>
-                  <span className="text-xs font-semibold text-zinc-500 min-w-[3rem] text-center">
+                  <span className="text-xs font-semibold text-zinc-500 min-w-12 text-center">
                     {prescriptions.length > 0 ? `${currentIndex + 1} / ${prescriptions.length}` : "0 / 0"}
                   </span>
                   <button
@@ -901,7 +901,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Prescription Content Area */}
-              <div className="bg-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-zinc-200 overflow-hidden min-h-[400px] flex flex-col">
+              <div className="bg-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-zinc-200 overflow-hidden min-h-100 flex flex-col">
                 
                 {loading ? (
                   <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
@@ -1069,7 +1069,7 @@ export default function DashboardPage() {
 
       {/* Delete Prescription Confirm Overlay */}
       {deleteRx != null && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-zinc-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xs p-8">
             <div className="flex flex-col items-center text-center gap-3">
               <div className="w-14 h-14 rounded-full bg-red-50 border border-red-100 flex items-center justify-center mb-1">
@@ -1236,7 +1236,7 @@ export default function DashboardPage() {
 
       {/* Delete Confirm Overlay */}
       {deleteConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-zinc-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xs p-8">
             <div className="flex flex-col items-center text-center gap-3">
               <div className="w-14 h-14 rounded-full bg-red-50 border border-red-100 flex items-center justify-center mb-1">

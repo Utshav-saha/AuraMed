@@ -6,7 +6,6 @@ import { api, type CartItemRow, type Prescription, type PrescriptionLineItem } f
 import {
   PLACEHOLDER_CART_ITEMS,
   PLACEHOLDER_MEDICINES,
-  PLACEHOLDER_PRESCRIPTIONS,
   placeholderPrice,
 } from "./placeholder";
 
@@ -133,8 +132,8 @@ export async function loadEnrichedPrescriptions(
   try {
     list = await api.getPrescriptions(patientId);
   } catch {
-    // 404 (no prescriptions) or no backend → placeholder
-    list = PLACEHOLDER_PRESCRIPTIONS;
+    // 404 (no prescriptions) or no backend → empty state
+    list = [];
   }
 
   const cache = new Map<number, MedicineDisplay>();

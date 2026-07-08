@@ -7,7 +7,6 @@ import type {
   CartResult,
   AuthResponse,
   CartItemRow,
-  Prescription,
 } from "./api";
 
 // placeholder — a fake signed-in account used by the login page's "bypass" button
@@ -23,29 +22,17 @@ export const PLACEHOLDER_AUTH: AuthResponse = {
 
 // placeholder — 5 sample medicines (search "napa" to see them)
 export const PLACEHOLDER_MEDICINES: MedicineResult[] = [
-  { medicine_id: 9001, brand_name: "Napa", strength: "500mg", manufacturer_name: "Beximco Pharmaceuticals", generic_name: "Paracetamol", similarity: 0.98 },
-  { medicine_id: 9002, brand_name: "Napa Extra", strength: "500mg + 65mg", manufacturer_name: "Beximco Pharmaceuticals", generic_name: "Paracetamol + Caffeine", similarity: 0.94 },
-  { medicine_id: 9003, brand_name: "Ace", strength: "500mg", manufacturer_name: "Square Pharmaceuticals", generic_name: "Paracetamol", similarity: 0.9 },
-  { medicine_id: 9004, brand_name: "Histacin", strength: "10mg", manufacturer_name: "Square Pharmaceuticals", generic_name: "Cetirizine Hydrochloride", similarity: 0.82 },
-  { medicine_id: 9005, brand_name: "Maxpro", strength: "20mg", manufacturer_name: "Renata Limited", generic_name: "Esomeprazole", similarity: 0.78 },
+  
 ];
 
 // placeholder — 5 sample pharmacies (search "green pharmacy" to see them)
 export const PLACEHOLDER_PHARMACIES: PharmacyNameResult[] = [
-  { pharmacy_id: 9001, pharmacy_name: "Green Pharmacy" },
-  { pharmacy_id: 9002, pharmacy_name: "Lazz Pharma" },
-  { pharmacy_id: 9003, pharmacy_name: "Tamanna Pharmacy" },
-  { pharmacy_id: 9004, pharmacy_name: "Wellness Pharma" },
-  { pharmacy_id: 9005, pharmacy_name: "City Care Pharmacy" },
+  
 ];
 
 // placeholder — names + distances for mock nearby-pharmacy results
 const PLACEHOLDER_NEARBY: Array<{ id: number; name: string; distance: number }> = [
-  { id: 9001, name: "Green Pharmacy", distance: 420 },
-  { id: 9002, name: "Lazz Pharma", distance: 980 },
-  { id: 9003, name: "Tamanna Pharmacy", distance: 1450 },
-  { id: 9004, name: "Wellness Pharma", distance: 2300 },
-  { id: 9005, name: "City Care Pharmacy", distance: 3100 },
+  
 ];
 
 // placeholder — filter mock medicines by query, falling back to all 5 so something always shows
@@ -74,9 +61,6 @@ export function placeholderPharmacyNameSearch(q: string): PharmacyNameResult[] {
 // backend cart row carries no medicine name/price, so the cart page enriches
 // each row via fetchMedicineDetails; here we point at the mock medicine ids.
 export const PLACEHOLDER_CART_ITEMS: CartItemRow[] = [
-  { cart_id: 5001, medicine_id: 9001, count: 2, order_status: "pending", assigned_pharmacy_name: null, patient_id: 1 },
-  { cart_id: 5002, medicine_id: 9004, count: 1, order_status: "pending", assigned_pharmacy_name: null, patient_id: 1 },
-  { cart_id: 5003, medicine_id: 9005, count: 1, order_status: "pending", assigned_pharmacy_name: null, patient_id: 1 },
 ];
 
 // placeholder — the backend exposes no price field at all; this is a purely
@@ -85,40 +69,6 @@ export const PLACEHOLDER_CART_ITEMS: CartItemRow[] = [
 export function placeholderPrice(medicineId: number): number {
   return Math.round((((medicineId * 37) % 90) + 10) * 100) / 100; // 10.00–99.x, stable per id
 }
-
-// placeholder — mock stored prescriptions (shape of GET /get_prescriptions).
-// Backend rows carry doctor_id (no doctor name) and item medicine_id (no names),
-// so consumers enrich names via fetchMedicineDetails and fall back here offline.
-export const PLACEHOLDER_PRESCRIPTIONS: Prescription[] = [
-  {
-    prescription_id: 1,
-    patient_id: 1,
-    doctor_id: 7,
-    specialization: "General Physician",
-    doctorName: "Dr. Ayesha Rahman",
-    prescribed_at: "2026-06-20T10:30:00Z",
-    disease_diagnosis: "Upper Respiratory Infection",
-    location_issued: { latitude: 23.8103, longitude: 90.4125 },
-    items: [
-      { medicine_id: 9001, dosage_instruction: "1+0+1", duration: 5 },
-      { medicine_id: 9004, dosage_instruction: "0+0+1", duration: 7 },
-    ],
-  },
-  {
-    prescription_id: 2,
-    patient_id: 1,
-    doctor_id: 4,
-    specialization: "Pulmonologist",
-    doctorName: "Dr. Imran Hossain",
-    prescribed_at: "2026-05-14T09:00:00Z",
-    disease_diagnosis: "Acute Bronchitis",
-    location_issued: { latitude: 23.7806, longitude: 90.4072 },
-    items: [
-      { medicine_id: 9002, dosage_instruction: "1+1+1", duration: 7 },
-      { medicine_id: 9005, dosage_instruction: "1+0+1", duration: 5 },
-    ],
-  },
-];
 
 // placeholder — build a mock CartResult for the location page's nearby search.
 // Each pharmacy "stocks" the requested medicines so result rows + cart overlay render.

@@ -6,11 +6,6 @@ import { api } from "@/lib/api";
 
 type Message = { role: "user" | "assistant"; text: string };
 
-/**
- * Floating drug-safety assistant. Streams answers from POST /api/v1/chat/chatbot,
- * grounded in the official leaflet. `genericId` narrows the context to one drug;
- * when omitted the backend searches across all leaflets.
- */
 export default function DrugSafetyChat({ genericId = null }: { genericId?: number | null }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
@@ -27,7 +22,6 @@ export default function DrugSafetyChat({ genericId = null }: { genericId?: numbe
     if (!question || streaming) return;
     setInput("");
     setStreaming(true);
-    // Append the user message and an empty assistant message to stream into.
     setMessages((prev) => [...prev, { role: "user", text: question }, { role: "assistant", text: "" }]);
 
     api.streamChatbot(
@@ -62,7 +56,7 @@ export default function DrugSafetyChat({ genericId = null }: { genericId?: numbe
         <button
           onClick={() => setOpen(true)}
           title="Drug Safety Assistant"
-          className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-gradient-to-br from-[#5AA6E8] to-[#3A78C4] text-white flex items-center justify-center shadow-[0_6px_24px_rgba(58,120,196,0.45)] hover:scale-105 transition-transform"
+          className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-linear-to-br from-[#5AA6E8] to-[#3A78C4] text-white flex items-center justify-center shadow-[0_6px_24px_rgba(58,120,196,0.45)] hover:scale-105 transition-transform"
         >
           <MessageCircle size={22} />
         </button>
@@ -70,9 +64,9 @@ export default function DrugSafetyChat({ genericId = null }: { genericId?: numbe
 
       {/* Panel */}
       {open && (
-        <div className="fixed bottom-6 right-6 z-50 w-[360px] max-w-[calc(100vw-2rem)] h-[520px] max-h-[calc(100vh-3rem)] bg-white rounded-[22px] border border-[rgba(215,225,245,0.70)] shadow-[0_12px_48px_rgba(140,158,205,0.30)] flex flex-col overflow-hidden">
+        <div className="fixed bottom-6 right-6 z-50 w-90 max-w-[calc(100vw-2rem)] h-130 max-h-[calc(100vh-3rem)] bg-white rounded-[22px] border border-[rgba(215,225,245,0.70)] shadow-[0_12px_48px_rgba(140,158,205,0.30)] flex flex-col overflow-hidden">
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-br from-[#5AA6E8] to-[#3A78C4] text-white shrink-0">
+          <div className="flex items-center justify-between px-4 py-3 bg-linear-to-br from-[#5AA6E8] to-[#3A78C4] text-white shrink-0">
             <div className="flex items-center gap-2">
               <ShieldCheck size={18} />
               <div>

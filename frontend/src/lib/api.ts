@@ -27,11 +27,13 @@ export type MedicineResult = {
   similarity: number;
 };
 
-export type PharmacyCartItem = {
+export interface PharmacyCartItem {
   provided_medicine_id: number;
+  provided_medicine_name: string; 
+  target_medicine_id: number;     
   is_exact: boolean;
   stock_count: number;
-};
+}
 
 export type OneStopShop = {
   pharmacy_id: number;
@@ -46,11 +48,13 @@ export type MultiStopItem = {
   distance_meters: number;
 };
 
-export type AvailableMed = {
-  medicine_id: number;
+export interface AvailableMed {
+  provided_medicine_id: number;
+  provided_medicine_name: string;
+  target_medicine_id: number;
   stock_count: number;
   is_exact: boolean;
-};
+}
 
 export type PartialMatch = {
   pharmacy_id: number;

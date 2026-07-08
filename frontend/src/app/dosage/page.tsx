@@ -34,8 +34,11 @@ interface ManualItem {
   duration: number;
 }
 
-// ── Shared layout components ──────────────────────────────────
-function NavBar({ logout }: { logout: () => void }) {
+// ── NavBar ─────────────────────────────────────────────────────
+function NavBar({ logout, patientName }: { logout: () => void; patientName?: string }) {
+  const displayName = patientName || "Guest";
+  const avatarInitial = displayName.charAt(0).toUpperCase() || "A";
+
   return (
     <header className="h-16 bg-white/70 backdrop-blur-md border-b border-zinc-200 flex items-center justify-between px-8 shrink-0 z-10">
       <div className="lg:hidden flex items-center gap-2.5">
@@ -54,8 +57,8 @@ function NavBar({ logout }: { logout: () => void }) {
           <Settings size={18} className="text-zinc-500 hover:text-zinc-900" />
         </button>
         <div className="w-px h-5 bg-zinc-200 mx-1" />
-        <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm border border-indigo-700 ml-1 cursor-default">
-          A
+        <div title={displayName} className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm border border-indigo-700 ml-1 cursor-default">
+          {avatarInitial}
         </div>
         <button onClick={logout} title="Log out" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-red-50 text-zinc-400 hover:text-red-600 transition-colors ml-1">
           <LogOut size={16} />
@@ -187,9 +190,13 @@ export default function DosagePage() {
     }
   }, [activeItems, nameById, period]);
 
-  // Auto-recalculate when dependencies change
+  // Auto-recalculate when dependencies change. Deferred so we don't kick off
+  // state updates (setCalculating/setError inside calculate) synchronously
+  // within the effect body.
   useEffect(() => {
-    if (!loading) calculate();
+    if (loading) return;
+    const id = setTimeout(() => calculate(), 0);
+    return () => clearTimeout(id);
   }, [loading, calculate]);
 
   // Handlers
@@ -222,9 +229,9 @@ export default function DosagePage() {
       <Sidebar />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-        <NavBar logout={logout} />
+        <NavBar logout={logout} patientName={patient?.name} />
         {/* Subtle background glow */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
+        <div className="absolute top-0 right-0 w-125 h-125 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
 
         <main className="flex-1 overflow-y-auto p-8 lg:p-12">
           <div className="max-w-6xl mx-auto flex flex-col lg:flex-row gap-8 items-start">
@@ -342,7 +349,7 @@ export default function DosagePage() {
             </div>
 
             {/* ── Right Column: Results ── */}
-            <div className="w-full lg:w-[380px] shrink-0">
+            <div className="w-full lg:w-95 shrink-0">
               <div className="bg-zinc-900 rounded-3xl shadow-xl p-8 flex flex-col gap-6 text-white sticky top-8">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-bold">Calculation Results</h2>

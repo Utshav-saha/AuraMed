@@ -411,7 +411,7 @@ function MedicinesPageInner() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         <NavBar logout={logout} avatarInitial={avatarInitial} displayName={displayName} />
         {/* Subtle background glow */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
+        <div className="absolute top-0 right-0 w-125 h-125 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
 
         <main className="flex-1 overflow-y-auto p-8 lg:p-12">
           <div className="max-w-4xl mx-auto flex flex-col gap-6">

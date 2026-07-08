@@ -63,7 +63,6 @@ async def book_appointment(payload: BookAppointmentRequest):
         
         insert_res = supabase.table("Appointments").insert(appt_data).execute()
         
-        # Step 3: Decrement the available slots count
         new_count = avail_res.data["available_slots"] - 1
         supabase.table("hospital_doctor_availability") \
             .update({"available_slots": new_count}) \
@@ -80,18 +79,12 @@ async def book_appointment(payload: BookAppointmentRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Booking failed: {str(e)}")
 
-
-# ==========================================
-# 4. View My Appointments (Upcoming & Past)
-# ==========================================
 @router.get("/my-appointments")
 async def get_my_appointments(
     patient_id: int, 
     status: str = Query(..., description="Must be 'upcoming' or 'past'")
 ):
-    """
-    Fetches booked appointments for a specific patient.
-    """
+    
     if status not in ["upcoming", "past"]:
         raise HTTPException(status_code=400, detail="Status must be 'upcoming' or 'past'")
         
@@ -102,15 +95,11 @@ async def get_my_appointments(
             "id, date, time, doctors(id, name, specialization)"
         ).eq("patient_id", patient_id)
         
-        # Filter logic based on current date
         if status == "upcoming":
-            # Date is today or in the future
             query = query.gte("date", today)
         else:
-            # Date is in the past
             query = query.lt("date", today)
             
-        # Sort by date (descending for past, ascending for upcoming)
         sort_order = False if status == "past" else True
         query = query.order("date", desc=not sort_order).order("time", desc=not sort_order)
         

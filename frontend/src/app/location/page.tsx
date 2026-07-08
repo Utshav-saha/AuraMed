@@ -14,7 +14,6 @@ import {
   type PharmacyNameResult,
   type CartResult,
   type PartialMatch,
-  type AvailableMed,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -35,8 +34,6 @@ interface MedicineChip {
   generic_name: string;
   strength: string | null;
   quantity: number;
-  // Required by the search-pharmacies RPC for generic-equivalent matching.
-  // Resolved in the background via /prescriptions/medicine_variants; 0 = unknown.
   dosage_form_id: number;
 }
 
@@ -48,6 +45,15 @@ interface PharmacyChip {
 interface QtyOverlay {
   idx: number;
   chip: MedicineChip;
+}
+
+// FIX: Updated AvailableMed to match backend
+export interface AvailableMed {
+  provided_medicine_id: number;
+  provided_medicine_name: string;
+  target_medicine_id: number;
+  stock_count: number;
+  is_exact: boolean;
 }
 
 interface DisplayPharmacy {
@@ -72,7 +78,10 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 // ── NavBar ─────────────────────────────────────────────────────
-function NavBar({ logout }: { logout: () => void }) {
+function NavBar({ logout, patientName }: { logout: () => void; patientName?: string }) {
+  const displayName = patientName || "Guest";
+  const avatarInitial = displayName.charAt(0).toUpperCase() || "A";
+
   return (
     <header className="h-16 bg-white/70 backdrop-blur-md border-b border-zinc-200 flex items-center justify-between px-8 shrink-0 z-10">
       <div className="lg:hidden flex items-center gap-2.5">
@@ -81,7 +90,7 @@ function NavBar({ logout }: { logout: () => void }) {
         </div>
         <span className="text-base font-bold tracking-tight text-zinc-900">AuraMed</span>
       </div>
-      <div className="hidden lg:block" /> {/* Spacer */}
+      <div className="hidden lg:block" />
       <div className="flex items-center gap-3">
         <button className="relative w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-100 transition-colors">
           <Bell size={18} className="text-zinc-500 hover:text-zinc-900" />
@@ -91,8 +100,8 @@ function NavBar({ logout }: { logout: () => void }) {
           <Settings size={18} className="text-zinc-500 hover:text-zinc-900" />
         </button>
         <div className="w-px h-5 bg-zinc-200 mx-1" />
-        <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm border border-indigo-700 ml-1 cursor-default">
-          A
+        <div title={displayName} className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm border border-indigo-700 ml-1 cursor-default">
+          {avatarInitial}
         </div>
         <button onClick={logout} title="Log out" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-red-50 text-zinc-400 hover:text-red-600 transition-colors ml-1">
           <LogOut size={16} />
@@ -146,7 +155,7 @@ function FilterToggle({
       }`}
     >
       <div className={`w-10 h-5 rounded-full relative transition-colors shrink-0 ${active ? "bg-indigo-500" : "bg-zinc-200"}`}>
-        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${active ? "left-[22px]" : "left-0.5"}`} />
+        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${active ? "left-5.5" : "left-0.5"}`} />
       </div>
       <div>
         <p className={`text-sm font-bold ${active ? "text-indigo-900" : "text-zinc-700"}`}>{label}</p>
@@ -165,7 +174,8 @@ function PharmacyRow({
   exactMatchOn: boolean;
   onCartClick: () => void;
 }) {
-  const availableMap = new Map(pharmacy.availableMeds.map((m) => [m.medicine_id, m]));
+  // Use target_medicine_id so we map back to the originally requested medicine
+  const availableMap = new Map(pharmacy.availableMeds.map((m) => [m.target_medicine_id, m]));
 
   return (
     <div
@@ -194,30 +204,25 @@ function PharmacyRow({
               const available = !!med;
               const isGeneric = available && !med.is_exact;
 
-              if (!available) {
+              // If totally unavailable, or it's a generic but the user forced exact match
+              if (!available || (isGeneric && exactMatchOn)) {
                 return (
                   <span key={chip.medicine_id} className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full bg-zinc-50 text-zinc-400 border border-zinc-200">
                     <X size={12} />
-                    {chip.brand_name}
+                    Don&apos;t have {chip.brand_name}
                   </span>
                 );
               }
-              if (isGeneric && exactMatchOn) {
-                return (
-                  <span key={chip.medicine_id} className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full bg-zinc-50 text-zinc-400 border border-zinc-200">
-                    <X size={12} />
-                    {chip.brand_name}
-                  </span>
-                );
-              }
+              // If it's available as a generic substitute
               if (isGeneric) {
                 return (
                   <span key={chip.medicine_id} className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
                     <AlertCircle size={12} />
-                    {chip.brand_name} (generic)
+                    Don&apos;t have {chip.brand_name}, have {med.provided_medicine_name} instead
                   </span>
                 );
               }
+              // If it's an exact match
               return (
                 <span key={chip.medicine_id} className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
                   <CheckCircle2 size={12} />
@@ -240,7 +245,7 @@ function PharmacyRow({
   );
 }
 
-// ── Inner page component (uses useSearchParams — needs Suspense) ─
+// ── Inner page component ───────────────────────────────────────
 function LocationPageInner() {
   const searchParams = useSearchParams();
   const { patient, logout } = useAuth();
@@ -253,7 +258,6 @@ function LocationPageInner() {
   const [medicineChips, setMedicineChips] = useState<MedicineChip[]>([]);
   const [pharmacyChips, setPharmacyChips] = useState<PharmacyChip[]>([]);
   
-  // FIX: Initialize exactMatch directly from searchParams to avoid the ESLint warning.
   const [exactMatch, setExactMatch] = useState(searchParams.get("exact") === "1");
   const [singlePharmacy, setSinglePharmacy] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
@@ -271,7 +275,6 @@ function LocationPageInner() {
   const autocompleteRef = useRef<HTMLDivElement>(null);
   const debouncedQuery = useDebounce(query, 320);
 
-  // Close autocomplete on outside click
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
       if (
@@ -287,10 +290,7 @@ function LocationPageInner() {
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  // Fetch autocomplete results
   useEffect(() => {
-    // Return early if not enough characters.
-    // (Clearing the array is now handled instantly in the input's onChange to fix the ESLint error)
     if (debouncedQuery.trim().length < 2) {
       return;
     }
@@ -316,7 +316,6 @@ function LocationPageInner() {
     return () => { cancelled = true; };
   }, [debouncedQuery, searchMode]);
 
-  // ── Chip management ────────────────────────────────────────
   const addMedicineChip = useCallback((med: MedicineResult) => {
     setMedicineChips((prev) => {
       if (prev.some((c) => c.medicine_id === med.medicine_id)) return prev;
@@ -332,8 +331,6 @@ function LocationPageInner() {
     setQuery("");
     setShowAutocomplete(false);
 
-    // Resolve the medicine's dosage_form_id in the background (needed by the
-    // nearby-pharmacy RPC to also match generic equivalents of the same form).
     api.getMedicineVariants(med.brand_name)
       .then((variants) => {
         const v = variants.find((x) => x.medicine_id === med.medicine_id);
@@ -345,7 +342,7 @@ function LocationPageInner() {
           );
         }
       })
-      .catch(() => { /* generic matching just falls back to exact-only */ });
+      .catch(() => {});
   }, []);
 
   const addPharmacyChip = useCallback((pharm: PharmacyNameResult) => {
@@ -368,14 +365,12 @@ function LocationPageInner() {
     if (q.length === 0) return;
     setSearchError(null);
 
-    // Instant path: use the loaded dropdown result if present
     if (autocompleteResults.length > 0) {
       if (searchMode === "medicine") addMedicineChip(autocompleteResults[0] as MedicineResult);
       else addPharmacyChip(autocompleteResults[0] as PharmacyNameResult);
       return;
     }
 
-    // Fallback: resolve the typed text against the backend directly
     setAddingChip(true);
     try {
       if (searchMode === "medicine") {
@@ -394,7 +389,6 @@ function LocationPageInner() {
     }
   };
 
-  // ── Search ─────────────────────────────────────────────────
   const handleSearch = () => {
     if (searchMode === "medicine" && medicineChips.length === 0) {
       setSearchError("Add at least one medicine to search.");
@@ -409,7 +403,6 @@ function LocationPageInner() {
     setResults(null);
 
     if (searchMode === "pharmacy") {
-      // Pharmacy name mode: show the selected pharmacies directly (no geo needed for display)
       setResults({
         one_stop_options: [],
         multi_stop_route: [],
@@ -449,13 +442,10 @@ function LocationPageInner() {
     );
   };
 
-  // ── Displayed pharmacy list ────────────────────────────────
   const displayedPharmacies: DisplayPharmacy[] = (() => {
     if (!results) return [];
 
     if (singlePharmacy && searchMode === "medicine") {
-      // Apply exact match filter: drop pharmacies where any requested medicine
-      // is only available as a generic when exactMatch is on
       let options = results.one_stop_options;
       if (exactMatch) {
         options = options.filter((p) =>
@@ -467,17 +457,17 @@ function LocationPageInner() {
         pharmacyName: p.pharmacy_name,
         distanceMeters: p.distance_meters,
         availableMeds: p.items.map((it) => ({
-          medicine_id: it.provided_medicine_id,
+          provided_medicine_id: it.provided_medicine_id,
+          provided_medicine_name: it.provided_medicine_name,
+          target_medicine_id: it.target_medicine_id,
           stock_count: it.stock_count,
           is_exact: it.is_exact,
         })),
       }));
     }
 
-    // Partial / pharmacy-name mode
     let partials = results.partial_matches;
     if (exactMatch && searchMode === "medicine") {
-      // Re-score: only count exact-match medicines
       partials = partials
         .map((p) => ({
           ...p,
@@ -496,7 +486,6 @@ function LocationPageInner() {
     }));
   })();
 
-  // ── Cart overlay helpers ───────────────────────────────────
   const openCartOverlay = (pharmacy: DisplayPharmacy) => {
     setCartOverlay({
       pharmacy_id: pharmacy.pharmacyId,
@@ -511,15 +500,15 @@ function LocationPageInner() {
     setCartSuccess(false);
   };
 
-  const getStockForMedicine = (medId: number): number => {
+  const getStockForMedicine = (targetId: number): number => {
     if (!cartOverlay) return 0;
-    const found = cartOverlay.available_medicines.find((m) => m.medicine_id === medId);
+    const found = cartOverlay.available_medicines.find((m) => m.target_medicine_id === targetId);
     return found ? found.stock_count : 0;
   };
 
-  const isMedicineAvailableInOverlay = (medId: number): boolean => {
+  const isMedicineAvailableInOverlay = (targetId: number): boolean => {
     if (!cartOverlay) return false;
-    return cartOverlay.available_medicines.some((m) => m.medicine_id === medId);
+    return cartOverlay.available_medicines.some((m) => m.target_medicine_id === targetId);
   };
 
   const handleAddToCart = async () => {
@@ -528,14 +517,16 @@ function LocationPageInner() {
     try {
       const promises = medicineChips
         .filter((c) => isMedicineAvailableInOverlay(c.medicine_id) && (cartQtys[c.medicine_id] ?? 0) > 0)
-        .map((c) =>
-          api.addToCart({
-            medicine_id: c.medicine_id,
+        .map((c) => {
+          // Send the actual substituted ID to the cart
+          const med = cartOverlay.available_medicines.find(m => m.target_medicine_id === c.medicine_id);
+          return api.addToCart({
+            medicine_id: med!.provided_medicine_id, 
             count: cartQtys[c.medicine_id] ?? 1,
             assigned_pharmacy: cartOverlay.pharmacy_id,
             patient_id: patient?.id ?? 1,
-          })
-        );
+          });
+        });
       await Promise.all(promises);
       setCartSuccess(true);
       setTimeout(() => {
@@ -543,13 +534,11 @@ function LocationPageInner() {
         setCartSuccess(false);
       }, 1400);
     } catch {
-      // keep overlay open so user can retry
     } finally {
       setAddingToCart(false);
     }
   };
 
-  // ── Qty overlay helpers ────────────────────────────────────
   const openQtyOverlay = (chip: MedicineChip, idx: number) => {
     setQtyOverlay({ chip, idx });
     setQtyTemp(chip.quantity);
@@ -563,31 +552,26 @@ function LocationPageInner() {
     setQtyOverlay(null);
   };
 
-  // ── Render ─────────────────────────────────────────────────
   return (
     <div className="flex h-screen bg-[#FAFAFA] font-sans text-zinc-900 overflow-hidden selection:bg-indigo-100 selection:text-indigo-900">
       
       <Sidebar />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-        <NavBar logout={logout} />
-        {/* Subtle background glow */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
+        <NavBar logout={logout} patientName={patient?.name} />
+        <div className="absolute top-0 right-0 w-125 h-125 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none -z-10" />
 
-        {/* ── Main Content ── */}
         <main className="flex-1 overflow-y-auto p-8 lg:p-12">
           <div className="max-w-4xl mx-auto flex flex-col gap-6">
 
-            {/* ── Header row ── */}
             <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
               <div>
                 <h1 className="text-3xl font-bold text-zinc-900 tracking-tight">Find Pharmacies</h1>
                 <p className="text-sm text-zinc-500 mt-2">
-                  Search by medicine or pharmacy name — well find whats nearby.
+                  Search by medicine or pharmacy name — we&apos;ll find what&apos;s nearby.
                 </p>
               </div>
 
-              {/* Mode toggle */}
               <div className="flex items-center bg-zinc-100 rounded-xl p-1 gap-1 shadow-sm border border-zinc-200">
                 {(["medicine", "pharmacy"] as const).map((mode) => (
                   <button
@@ -611,10 +595,8 @@ function LocationPageInner() {
               </div>
             </div>
 
-            {/* ── Search card ── */}
             <div className="bg-white rounded-3xl shadow-sm border border-zinc-200 p-6 lg:p-8 flex flex-col gap-6 shrink-0">
 
-              {/* Search input row */}
               <div className="flex gap-3 items-start">
                 <div className="relative flex-1">
                   <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none z-10" />
@@ -625,7 +607,6 @@ function LocationPageInner() {
                     onChange={(e) => {
                       const val = e.target.value;
                       setQuery(val);
-                      // Fix for ESLint warning: Clear instantly without waiting for debounce/effect
                       if (val.trim().length < 2) {
                         setAutocompleteResults([]);
                         setShowAutocomplete(false);
@@ -641,7 +622,6 @@ function LocationPageInner() {
                     className="w-full h-12 pl-12 pr-4 bg-zinc-50 border border-zinc-200 rounded-2xl text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-sm"
                   />
 
-                  {/* Autocomplete dropdown */}
                   {showAutocomplete && autocompleteResults.length > 0 && (
                     <div
                       ref={autocompleteRef}
@@ -682,7 +662,6 @@ function LocationPageInner() {
                   )}
                 </div>
 
-                {/* + button */}
                 <button
                   onClick={addFromInput}
                   disabled={addingChip}
@@ -697,14 +676,16 @@ function LocationPageInner() {
                 </button>
               </div>
 
-              {/* Selected chips */}
               {(medicineChips.length > 0 || pharmacyChips.length > 0) && (
                 <div className="flex flex-wrap gap-2.5">
                   {medicineChips.map((chip, idx) => (
                     <div key={chip.medicine_id} className="flex flex-col items-start gap-1">
-                      <button
+                      {/* FIX: Hydration crash wrapper changed to div */}
+                      <div
                         onClick={() => openQtyOverlay(chip, idx)}
-                        className="group flex items-center gap-2 pl-3 pr-2 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl text-sm font-semibold text-indigo-900 hover:bg-indigo-100 hover:border-indigo-300 transition-all shadow-sm"
+                        role="button"
+                        tabIndex={0}
+                        className="group flex items-center gap-2 pl-3 pr-2 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl text-sm font-semibold text-indigo-900 hover:bg-indigo-100 hover:border-indigo-300 transition-all shadow-sm cursor-pointer"
                       >
                         <Pill size={14} className="text-indigo-600 shrink-0" />
                         <span>{chip.brand_name}{chip.strength ? ` ${chip.strength}` : ""}</span>
@@ -715,7 +696,7 @@ function LocationPageInner() {
                         >
                           <X size={12} className="text-indigo-600" />
                         </button>
-                      </button>
+                      </div>
                       <span className="text-[10px] text-zinc-400 pl-1 font-medium">Tap to adjust qty</span>
                     </div>
                   ))}
@@ -738,9 +719,7 @@ function LocationPageInner() {
                 </div>
               )}
 
-              {/* Filter toggles + Search button */}
               <div className="flex flex-col sm:flex-row items-center gap-4 flex-wrap pt-2 border-t border-zinc-100">
-                {/* FIX: Only show filters if searching by Medicine */}
                 {searchMode === "medicine" && (
                   <>
                     <FilterToggle
@@ -774,7 +753,6 @@ function LocationPageInner() {
                 </button>
               </div>
 
-              {/* Error */}
               {searchError && (
                 <p className="text-sm font-semibold text-red-600 bg-red-50 p-3 rounded-xl border border-red-100 flex items-center gap-2">
                   <AlertCircle size={16} />
@@ -783,7 +761,6 @@ function LocationPageInner() {
               )}
             </div>
 
-            {/* ── Results ── */}
             {isSearching && (
               <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center py-20">
                 <Loader2 size={32} className="text-indigo-500 animate-spin" />
@@ -840,14 +817,12 @@ function LocationPageInner() {
         </main>
       </div>
 
-      {/* ── Cart Overlay ─────────────────────────────────────────── */}
       {cartOverlay && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200"
           onClick={(e) => { if (e.target === e.currentTarget && !addingToCart) setCartOverlay(null); }}
         >
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden max-h-[85vh]">
-            {/* Header */}
             <div className="flex items-start justify-between px-8 pt-8 pb-5 shrink-0 bg-white border-b border-zinc-100">
               <div>
                 <h2 className="text-xl font-bold text-zinc-900">{cartOverlay.pharmacy_name}</h2>
@@ -861,7 +836,6 @@ function LocationPageInner() {
               </button>
             </div>
 
-            {/* Medicine list */}
             <div className="flex-1 overflow-y-auto px-8 py-6 flex flex-col gap-4 bg-zinc-50/50">
               {cartSuccess ? (
                 <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
@@ -893,8 +867,16 @@ function LocationPageInner() {
                             <Pill size={18} className={available ? "text-indigo-600" : "text-zinc-400"} />
                           </div>
                           <div className="flex-1 min-w-0">
+                            {/* Display real names in the cart */}
                             <p className="text-sm font-bold text-zinc-900 truncate">
-                              {chip.brand_name}{chip.strength ? ` ${chip.strength}` : ""}
+                              {available && !cartOverlay.available_medicines.find(m => m.target_medicine_id === chip.medicine_id)!.is_exact ? (
+                                <>
+                                  {cartOverlay.available_medicines.find(m => m.target_medicine_id === chip.medicine_id)!.provided_medicine_name}
+                                  <span className="text-xs font-semibold text-amber-600 ml-2 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">Substitute for {chip.brand_name}</span>
+                                </>
+                              ) : (
+                                <>{chip.brand_name}{chip.strength ? ` ${chip.strength}` : ""}</>
+                              )}
                             </p>
                             <p className="text-xs font-medium text-zinc-500 truncate mt-0.5">{chip.generic_name}</p>
                             {!available && (
@@ -908,7 +890,6 @@ function LocationPageInner() {
                           </div>
                         </div>
 
-                        {/* Quantity controls */}
                         {available && (
                           <div className="flex items-center gap-2 shrink-0">
                             <button
@@ -952,7 +933,6 @@ function LocationPageInner() {
               )}
             </div>
 
-            {/* Footer */}
             {!cartSuccess && (
               <div className="px-8 py-5 shrink-0 bg-white border-t border-zinc-100 flex gap-4">
                 <button
@@ -978,14 +958,12 @@ function LocationPageInner() {
         </div>
       )}
 
-      {/* ── Medicine Quantity Overlay ─────────────────────────────── */}
       {qtyOverlay && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-60 flex items-center justify-center bg-zinc-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
           onClick={(e) => { if (e.target === e.currentTarget) setQtyOverlay(null); }}
         >
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xs p-8 flex flex-col gap-6">
-            {/* Header */}
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <p className="text-lg font-bold text-zinc-900 leading-tight">
@@ -1002,7 +980,6 @@ function LocationPageInner() {
               </button>
             </div>
 
-            {/* Qty picker */}
             <div className="flex flex-col items-center gap-3">
               <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Adjust Quantity</p>
               <div className="flex items-center gap-6 mt-2">
@@ -1034,7 +1011,6 @@ function LocationPageInner() {
   );
 }
 
-// ── Page export (wraps inner in Suspense for useSearchParams) ──
 export default function LocationPage() {
   return (
     <Suspense>
