@@ -109,7 +109,7 @@ async def fetch_medicine_details(medicine_id: int):
     conn = await asyncpg.connect(DATABASE_URL)
     try:
         query = """
-            select m.id, m.brand_name, m.type, m.slug, m.strength, m.package_container, m.package_size, m.manufacturer_name, d.name as dosage_form, g.generic_name, g.indication_name, g.indication_description, g.therapeutic_class_description,
+            select m.id, m.brand_name, m.type, m.slug, m.strength, m.package_container, m.package_size, m.manufacturer_name, d.name as dosage_form, g.name as generic_name, g.indication_name, g.indication_description, g.therapeutic_class_description,
             g.pharmacology_description, g.dosage_description, g.administration_description, g.interaction_description, g.contraindications_description, g.side_effects_description, g.pregnancy_and_lactation_description, g.precautions_description, g.pediatric_usage_description, g.overdose_effects_description, g.duration_of_treatment_description, g.reconstitution_description, g.storage_conditions_description, dc.name as drug_class_name
             from medicines m
             left join dosage_forms d on m.dosage_form_id = d.id

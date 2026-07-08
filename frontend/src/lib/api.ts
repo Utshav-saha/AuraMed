@@ -66,22 +66,62 @@ export type CartResult = {
   partial_matches: PartialMatch[];
 };
 
-export type PrescriptionItem = {
+// A dosage form row (GET /prescriptions/dosage_forms) — used for edit dropdowns
+export type DosageForm = {
+  id: number;
+  name: string;
+};
+
+// One purchasable variant of a brand (a specific strength + dosage form)
+export type MedicineVariant = {
+  medicine_id: number;
+  brand_name: string;
+  strength: string | null;
+  slug: string | null;
+  package_container: string | null;
+  package_size: string | null;
+  dosage_form_id: number | null;
+  dosage_form_name: string | null;
+};
+
+// One scanned medicine on the review form (POST /prescriptions/scan)
+export type ScannedMedicine = {
+  scanned_name: string;
+  scanned_strength: string | null;
+  scanned_dosage_form: string | null;
   medicine_id: number | null;
   brand_name: string | null;
   generic_name: string | null;
+  strength: string | null;
+  dosage_form_id: number | null;
+  dosage_form_name: string | null;
+  similarity: number | null;
+  variants: MedicineVariant[];
   dosage_instruction: string;
   duration_days: number;
-  similarity: number | null;
 };
 
-export type PrescriptionScanResponse = {
-  prescription_id: number;
-  doctor_id: number | null;
+// The pre-filled review form returned by /scan — nothing is persisted until
+// the patient confirms and POST /prescriptions/save_prescription is called.
+export type ScanReviewResponse = {
   doctor_name: string | null;
+  doctor_specialization: string | null;
   disease_diagnosis: string | null;
   raw_ocr_text: string;
-  items: PrescriptionItem[];
+  medicines: ScannedMedicine[];
+};
+
+export type SaveMedicineItem = {
+  medicine_id: number | null;
+  dosage_form_id: number | null;
+  dosage_instruction: string;
+  duration_days: number;
+};
+
+export type SavePrescriptionResponse = {
+  prescription_id: number;
+  doctor_id: number | null;
+  item_count: number;
 };
 
 export type PharmacyNameResult = {
@@ -146,7 +186,7 @@ export type PatientProfile = {
   patient_id: number;
   name: string;
   email: string;
-  user_id: number;
+  user_id: string; // users.id is a UUID
   home_location: Coordinate;
 };
 
@@ -161,6 +201,8 @@ export type Prescription = {
   prescription_id: number;
   patient_id: number;
   doctor_id: number;
+  specialization: string | null;
+  doctorName: string | null;
   prescribed_at: string;
   disease_diagnosis: string;
   location_issued: Coordinate;
@@ -195,6 +237,45 @@ export type CheckoutResult = {
   unassigned_medicine_ids: number[];
 };
 
+// One priced line from POST /cart/calculate_total_cost
+export type CostLineItem = {
+  medicine_id: number;
+  brand_name: string | null;
+  package_container: string | null;
+  count: number;
+  unit_price: number | null;
+  line_total: number | null;
+};
+
+export type CalculateCostResult = {
+  line_items: CostLineItem[];
+  total_cost: number;
+  unpriced_medicine_ids: number[];
+};
+
+// ── Appointments (GET /appointments/search, /my-appointments; POST /book) ──
+export type DoctorAvailability = {
+  id: number;
+  time_slot: string;
+  available_slots: number;
+  date: string | null;
+  hospitals: { id: number; name: string; coordinates: unknown | null } | null;
+};
+
+export type DoctorSearchResult = {
+  id: number;
+  name: string;
+  specialization: string | null;
+  hospital_doctor_availability: DoctorAvailability[];
+};
+
+export type BookedAppointment = {
+  id: number;
+  date: string;
+  time: string;
+  doctors: { id: number; name: string; specialization: string | null } | null;
+};
+
 export const api = {
   async searchMedicines(query: string, limit = 10): Promise<MedicineResult[]> {
     try {
@@ -211,6 +292,7 @@ export const api = {
     user_lng: number;
     search_radius_meters?: number;
     target_medicine_ids: number[];
+    target_dosage_forms: number[];
     target_quantities: number[];
   }): Promise<CartResult> {
     try {
@@ -294,9 +376,9 @@ export const api = {
   },
 
   // ── Patient page ──────────────────────────────────────────────
-  getPatient(userId: number): Promise<PatientProfile> {
+  getPatient(userId: string): Promise<PatientProfile> {
     return request<PatientProfile>(
-      `/api/v1/patient_page/get_patient?user_id=${userId}`
+      `/api/v1/patient_page/get_patient?user_id=${encodeURIComponent(userId)}`
     );
   },
 
@@ -326,6 +408,39 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  },
+
+  // ── Appointments ──────────────────────────────────────────────
+  async searchDoctors(q?: string): Promise<DoctorSearchResult[]> {
+    const url = q
+      ? `/api/v1/appointments/search?q=${encodeURIComponent(q)}`
+      : "/api/v1/appointments/search";
+    const res = await request<{ data: DoctorSearchResult[] }>(url);
+    return res.data;
+  },
+
+  bookAppointment(payload: {
+    patient_id: number;
+    doctor_id: number;
+    hospital_id: number;
+    appointment_date: string; // yyyy-mm-dd
+    appointment_time: string; // HH:MM:SS
+    availability_id: number;
+  }): Promise<{ message: string }> {
+    return request<{ message: string }>("/api/v1/appointments/book", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async myAppointments(
+    patientId: number,
+    status: "upcoming" | "past"
+  ): Promise<BookedAppointment[]> {
+    const res = await request<{ data: BookedAppointment[] }>(
+      `/api/v1/appointments/my-appointments?patient_id=${patientId}&status=${status}`
+    );
+    return res.data;
   },
 
   // ── Prescriptions (QR linking) ────────────────────────────────
@@ -363,15 +478,61 @@ export const api = {
     });
   },
 
-  async scanPrescription(imageFile: File, patientId?: number): Promise<PrescriptionScanResponse> {
+  // Scan returns a pre-filled review form — nothing is persisted until
+  // savePrescription is called with the patient-confirmed data.
+  async scanPrescription(imageFile: File): Promise<ScanReviewResponse> {
     const form = new FormData();
     form.append("file", imageFile);
-    const url = patientId
-      ? `/api/v1/prescriptions/scan?patient_id=${patientId}`
-      : "/api/v1/prescriptions/scan";
-    const res = await fetch(`${BASE_URL}${url}`, { method: "POST", body: form });
+    const res = await fetch(`${BASE_URL}/api/v1/prescriptions/scan`, {
+      method: "POST",
+      body: form,
+    });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
+  },
+
+  savePrescription(payload: {
+    patient_id: number | null;
+    doctor_name: string | null;
+    doctor_specialization: string | null;
+    disease_diagnosis: string | null;
+    raw_ocr_text: string | null;
+    medicines: SaveMedicineItem[];
+  }): Promise<SavePrescriptionResponse> {
+    return request<SavePrescriptionResponse>("/api/v1/prescriptions/save_prescription", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getDosageForms(): Promise<DosageForm[]> {
+    return request<DosageForm[]>("/api/v1/prescriptions/dosage_forms");
+  },
+
+  getMedicineVariants(brandName: string): Promise<MedicineVariant[]> {
+    return request<MedicineVariant[]>(
+      `/api/v1/prescriptions/medicine_variants?brand_name=${encodeURIComponent(brandName)}`
+    );
+  },
+
+  editPrescription(
+    patientId: number,
+    prescriptionId: number,
+    updated: { doctor_id: number | null; disease_diagnosis: string | null }
+  ): Promise<void> {
+    return request<void>(
+      `/api/v1/prescriptions/edit_prescription?patient_id=${patientId}&id=${prescriptionId}`,
+      { method: "POST", body: JSON.stringify(updated) }
+    );
+  },
+
+  calculateTotalCost(
+    items: { medicine_id: number; count: number }[]
+  ): Promise<CalculateCostResult> {
+    return request<CalculateCostResult>("/api/v1/cart/calculate_total_cost", {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    });
   },
 
   streamChatbot(

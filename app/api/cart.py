@@ -2,12 +2,28 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import asyncpg
-from collections import defaultdict 
+import re
+from collections import defaultdict
 from datetime import datetime
 
 from app.database import supabase, DATABASE_URL
 
 router = APIRouter()
+
+
+def _parse_unit_price(package_container: Optional[str]) -> Optional[float]:
+    if not package_container:
+        return None
+
+    after_symbol = re.search(r"৳\s*([0-9]+(?:\.[0-9]+)?)", package_container)
+    if after_symbol:
+        return float(after_symbol.group(1))
+
+    first_number = re.search(r"([0-9]+(?:\.[0-9]+)?)", package_container)
+    if first_number:
+        return float(first_number.group(1))
+
+    return None
 
 class AddToCartRequest(BaseModel):
     medicine_id: int
@@ -47,19 +63,44 @@ class CheckoutResponse(BaseModel):
     status: str
     assignments: List[AssignmentDetail]
     unassigned_medicine_ids: List[int]
+
+
+class CalculateCostRequest(BaseModel):
+    items: List[CartItem]
+
+
+class CostLineItem(BaseModel):
+    medicine_id: int
+    brand_name: Optional[str] = None
+    package_container: Optional[str] = None
+    count: int
+    unit_price: Optional[float] = None
+    line_total: Optional[float] = None
+
+
+class CalculateCostResponse(BaseModel):
+    line_items: List[CostLineItem]
+    total_cost: float
+    unpriced_medicine_ids: List[int]
     
 
 
 @router.post("/add_to_cart")
 async def add_to_cart(request: AddToCartRequest):
     conn = await asyncpg.connect(DATABASE_URL)
+
     try:
+        package_container_row = await conn.fetchrow(
+            "SELECT package_container FROM medicines WHERE id = $1",
+            request.medicine_id,
+        )
+        price = _parse_unit_price(package_container_row["package_container"])
         query = """
-            INSERT INTO patient_cart (medicine_id, count, order_status, assigned_pharmacy, patient_id)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO patient_cart (medicine_id, count, order_status, assigned_pharmacy, patient_id, price)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id
         """
-        result = await conn.fetchrow(query, request.medicine_id, request.count, request.order_status, request.assigned_pharmacy, request.patient_id)
+        result = await conn.fetchrow(query, request.medicine_id, request.count, request.order_status, request.assigned_pharmacy, request.patient_id, price)
         return {"cart_id": result["id"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -86,7 +127,7 @@ async def get_cart_items(patient_id: int):
     conn = await asyncpg.connect(DATABASE_URL)
     try:
         query = """
-            SELECT c.id AS cart_id, c.medicine_id, c.count, c.order_status, c.patient_id,
+            SELECT c.id AS cart_id, c.medicine_id, c.count, c.order_status, c.patient_id, c.price,
                    p.store_name AS assigned_pharmacy_name
             FROM patient_cart c
             LEFT JOIN pharmacies p ON c.assigned_pharmacy = p.id
@@ -116,13 +157,20 @@ async def checkout_cart(request: CheckoutRequest):
     try:
         medicine_ids = [item.medicine_id for item in request.items]
         quantity_map = {item.medicine_id: item.count for item in request.items}
+        quantities = [item.count for item in request.items]
 
-        # Resolve generic_ids so the RPC can also consider generic equivalents
-        generic_rows = await conn.fetch(
-            "SELECT generic_id FROM medicines WHERE id = ANY($1)",
+        meta_rows = await conn.fetch(
+            """
+            SELECT COALESCE(m.generic_id, 0) AS generic_id,
+                   COALESCE(m.dosage_form_id, 0) AS dosage_form_id
+            FROM unnest($1::bigint[]) WITH ORDINALITY AS u(id, ord)
+            LEFT JOIN medicines m ON m.id = u.id
+            ORDER BY u.ord
+            """,
             medicine_ids,
         )
-        generic_ids = [r["generic_id"] for r in generic_rows if r["generic_id"]]
+        generic_ids = [r["generic_id"] for r in meta_rows]
+        dosage_form_ids = [r["dosage_form_id"] for r in meta_rows]
 
         rpc_data = supabase.rpc(
             "find_nearby_pharmacy",
@@ -132,6 +180,8 @@ async def checkout_cart(request: CheckoutRequest):
                 "search_radius_meters": request.search_radius_meters,
                 "target_medicine_ids": medicine_ids,
                 "target_generic_ids": generic_ids,
+                "target_quantities": quantities,
+                "target_dosage_form_ids": dosage_form_ids,
             },
         ).execute().data
 
@@ -186,6 +236,56 @@ async def checkout_cart(request: CheckoutRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Checkout error: {str(e)}")
+    finally:
+        await conn.close()
+
+
+@router.post("/calculate_total_cost", response_model=CalculateCostResponse)
+async def calculate_total_cost(request: CalculateCostRequest):
+    conn = await asyncpg.connect(DATABASE_URL)
+    try:
+        medicine_ids = [item.medicine_id for item in request.items]
+        rows = await conn.fetch(
+            "SELECT id, brand_name, package_container FROM medicines WHERE id = ANY($1)",
+            medicine_ids,
+        )
+        info = {r["id"]: r for r in rows}
+
+        line_items: List[CostLineItem] = []
+        total_cost = 0.0
+        unpriced: List[int] = []
+
+        for item in request.items:
+            row = info.get(item.medicine_id)
+            brand_name = row["brand_name"] if row else None
+            package_container = row["package_container"] if row else None
+            unit_price = _parse_unit_price(package_container)
+
+            if unit_price is None:
+                line_total = None
+                unpriced.append(item.medicine_id)
+            else:
+                line_total = round(unit_price * item.count, 2)
+                total_cost += line_total
+
+            line_items.append(
+                CostLineItem(
+                    medicine_id=item.medicine_id,
+                    brand_name=brand_name,
+                    package_container=package_container,
+                    count=item.count,
+                    unit_price=unit_price,
+                    line_total=line_total,
+                )
+            )
+
+        return CalculateCostResponse(
+            line_items=line_items,
+            total_cost=round(total_cost, 2),
+            unpriced_medicine_ids=unpriced,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cost calculation error: {str(e)}")
     finally:
         await conn.close()
 

@@ -71,7 +71,38 @@ async function resolveMedicine(
   }
 }
 
-/** Load the patient's pending cart, enriched with medicine names + a display price. */
+// Resolve real unit prices for a set of cart rows via POST /cart/calculate_total_cost.
+// Falls back to the stable placeholder price when the backend can't price an item.
+async function resolveUnitPrices(rows: CartItemRow[]): Promise<Map<number, number>> {
+  const prices = new Map<number, number>();
+  if (rows.length === 0) return prices;
+  try {
+    const cost = await api.calculateTotalCost(
+      rows.map((r) => ({ medicine_id: r.medicine_id, count: r.count }))
+    );
+    cost.line_items.forEach((li) => {
+      if (li.unit_price != null) prices.set(li.medicine_id, li.unit_price);
+    });
+  } catch {
+    // no backend — placeholder fallback happens per-row below
+  }
+  return prices;
+}
+
+// Enrich raw cart rows with medicine display fields + a unit price.
+async function enrichCartRows(rows: CartItemRow[]): Promise<EnrichedCartItem[]> {
+  const cache = new Map<number, MedicineDisplay>();
+  const prices = await resolveUnitPrices(rows);
+  return Promise.all(
+    rows.map(async (row) => ({
+      ...row,
+      ...(await resolveMedicine(row.medicine_id, cache)),
+      unit_price: prices.get(row.medicine_id) ?? placeholderPrice(row.medicine_id), // placeholder fallback
+    }))
+  );
+}
+
+/** Load the patient's pending cart, enriched with medicine names + unit prices. */
 export async function loadEnrichedCart(patientId: number): Promise<EnrichedCartItem[]> {
   let rows: CartItemRow[];
   try {
@@ -80,15 +111,18 @@ export async function loadEnrichedCart(patientId: number): Promise<EnrichedCartI
   } catch {
     rows = PLACEHOLDER_CART_ITEMS; // placeholder
   }
+  return enrichCartRows(rows);
+}
 
-  const cache = new Map<number, MedicineDisplay>();
-  return Promise.all(
-    rows.map(async (row) => ({
-      ...row,
-      ...(await resolveMedicine(row.medicine_id, cache)),
-      unit_price: placeholderPrice(row.medicine_id), // placeholder — no backend price field
-    }))
-  );
+/** Load the patient's past (non-pending) orders, enriched the same way as the cart. */
+export async function loadEnrichedPastOrders(patientId: number): Promise<EnrichedCartItem[]> {
+  let rows: CartItemRow[];
+  try {
+    rows = await api.pastOrders(patientId);
+  } catch {
+    rows = []; // no backend — past orders simply show as empty
+  }
+  return enrichCartRows(rows);
 }
 
 /** Load the patient's prescriptions, enriched with medicine names. */

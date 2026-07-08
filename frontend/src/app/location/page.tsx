@@ -35,6 +35,9 @@ interface MedicineChip {
   generic_name: string;
   strength: string | null;
   quantity: number;
+  // Required by the search-pharmacies RPC for generic-equivalent matching.
+  // Resolved in the background via /prescriptions/medicine_variants; 0 = unknown.
+  dosage_form_id: number;
 }
 
 interface PharmacyChip {
@@ -323,10 +326,26 @@ function LocationPageInner() {
         generic_name: med.generic_name,
         strength: med.strength,
         quantity: 1,
+        dosage_form_id: 0,
       }];
     });
     setQuery("");
     setShowAutocomplete(false);
+
+    // Resolve the medicine's dosage_form_id in the background (needed by the
+    // nearby-pharmacy RPC to also match generic equivalents of the same form).
+    api.getMedicineVariants(med.brand_name)
+      .then((variants) => {
+        const v = variants.find((x) => x.medicine_id === med.medicine_id);
+        if (v?.dosage_form_id != null) {
+          setMedicineChips((prev) =>
+            prev.map((c) =>
+              c.medicine_id === med.medicine_id ? { ...c, dosage_form_id: v.dosage_form_id! } : c
+            )
+          );
+        }
+      })
+      .catch(() => { /* generic matching just falls back to exact-only */ });
   }, []);
 
   const addPharmacyChip = useCallback((pharm: PharmacyNameResult) => {
@@ -413,6 +432,7 @@ function LocationPageInner() {
             user_lat: pos.coords.latitude,
             user_lng: pos.coords.longitude,
             target_medicine_ids: medicineChips.map((c) => c.medicine_id),
+            target_dosage_forms: medicineChips.map((c) => c.dosage_form_id),
             target_quantities: medicineChips.map((c) => c.quantity),
           });
           setResults(res);

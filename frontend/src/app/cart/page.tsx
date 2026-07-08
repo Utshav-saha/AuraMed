@@ -8,7 +8,7 @@ import {
   HeartPulse, LogOut
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { loadEnrichedCart, type EnrichedCartItem } from "@/lib/data";
+import { loadEnrichedCart, loadEnrichedPastOrders, type EnrichedCartItem } from "@/lib/data";
 import { useAuth } from "@/lib/auth-context";
 
 // ── Nav items ──────────────────────────────────────────────────
@@ -90,6 +90,10 @@ export default function CartPage() {
   const patientId = patient?.id ?? 1; // placeholder fallback for guest mode
 
   const [cart, setCart] = useState<EnrichedCartItem[]>([]);
+  const [pastOrders, setPastOrders] = useState<EnrichedCartItem[]>([]);
+  const [showPast, setShowPast] = useState(false);
+  const [pastLoading, setPastLoading] = useState(false);
+  const [pastLoaded, setPastLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [promoCode, setPromoCode] = useState("");
   const [promoApplied, setPromoApplied] = useState(false);
@@ -172,12 +176,24 @@ export default function CartPage() {
     );
   }, [cart, patientId]);
 
+  // Lazily load past (non-pending) orders the first time the section is opened
+  const togglePastOrders = useCallback(() => {
+    setShowPast((v) => !v);
+    if (!pastLoaded) {
+      setPastLoading(true);
+      loadEnrichedPastOrders(patientId)
+        .then(setPastOrders)
+        .finally(() => { setPastLoading(false); setPastLoaded(true); });
+    }
+  }, [pastLoaded, patientId]);
+
   const subtotal = cart.reduce((sum, item) => sum + item.unit_price * item.count, 0);
   const discount = promoApplied ? subtotal * 0.1 : 0;
   const tax = (subtotal - discount) * TAX_RATE;
   const total = subtotal - discount + tax + (cart.length > 0 ? DELIVERY_FEE : 0);
 
-  const fmt = (n: number) => `$${n.toFixed(2)}`;
+  // Prices come from the medicine's package_container and are in Taka
+  const fmt = (n: number) => `৳${n.toFixed(2)}`;
 
   if (orderResult) {
     return (
@@ -358,6 +374,70 @@ export default function CartPage() {
                   </p>
                 </div>
               )}
+
+              {/* Past orders (GET /cart/past_orders) */}
+              <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
+                <button
+                  onClick={togglePastOrders}
+                  className="w-full px-6 py-4 flex items-center justify-between hover:bg-zinc-50 transition-colors"
+                >
+                  <span className="text-sm font-bold text-zinc-900 flex items-center gap-2.5">
+                    <PackageOpen size={16} className="text-indigo-500" />
+                    Past Orders
+                  </span>
+                  <ChevronRight
+                    size={16}
+                    className={`text-zinc-400 transition-transform ${showPast ? "rotate-90" : ""}`}
+                  />
+                </button>
+
+                {showPast && (
+                  <div className="border-t border-zinc-100 px-6 py-4 flex flex-col gap-3">
+                    {pastLoading ? (
+                      <div className="flex items-center gap-2 text-sm text-zinc-500 py-4 justify-center">
+                        <Loader2 size={16} className="animate-spin" /> Loading past orders…
+                      </div>
+                    ) : pastOrders.length === 0 ? (
+                      <p className="text-sm text-zinc-500 py-4 text-center">No past orders yet.</p>
+                    ) : (
+                      pastOrders.map((item) => (
+                        <div
+                          key={item.cart_id}
+                          className="flex items-center justify-between gap-4 py-3 border-b border-zinc-50 last:border-0"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-zinc-50 border border-zinc-100 flex items-center justify-center shrink-0">
+                              <Pill size={15} className="text-indigo-500" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-bold text-zinc-900 truncate">
+                                {item.brand_name}
+                                {item.strength && <span className="font-medium text-zinc-400"> {item.strength}</span>}
+                              </p>
+                              <p className="text-xs text-zinc-500 truncate">
+                                ×{item.count}
+                                {item.assigned_pharmacy_name ? ` · ${item.assigned_pharmacy_name}` : ""}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="text-sm font-bold text-zinc-900 tabular-nums">
+                              {fmt(item.unit_price * item.count)}
+                            </span>
+                            <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${
+                              item.order_status === "confirmed"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : "bg-zinc-100 text-zinc-600 border-zinc-200"
+                            }`}>
+                              {item.order_status}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* ── Order Summary Sidebar ── */}

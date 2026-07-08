@@ -106,8 +106,9 @@ create table public.hospital_doctor_availability (
   doctor_id bigint null,
   time_slot text not null,
   available_slots bigint not null default '0'::bigint,
+  date date null,
   constraint hospital_doctor_availability_pkey primary key (id),
-  constraint unique_hospital_doctor unique (hospital_id, doctor_id),
+  constraint unique_hospital_doctor_time unique (hospital_id, doctor_id, date, time_slot),
   constraint hospital_doctor_availability_doctor_id_fkey foreign KEY (doctor_id) references doctors (id) on delete CASCADE,
   constraint hospital_doctor_availability_hospital_id_fkey foreign KEY (hospital_id) references hospitals (id) on delete CASCADE
 ) TABLESPACE pg_default;
@@ -270,10 +271,12 @@ create table public.patient_cart (
   order_status text null,
   assigned_pharmacy bigint null,
   patient_id bigint not null,
+  price numeric null,
   constraint patient_cart_pkey primary key (id),
   constraint patient_cart_assigned_pharmacy_fkey foreign KEY (assigned_pharmacy) references pharmacies (id),
   constraint patient_cart_medicine_id_fkey foreign KEY (medicine_id) references medicines (id),
-  constraint patient_cart_patient_id_fkey foreign KEY (patient_id) references patients (id)
+  constraint patient_cart_patient_id_fkey foreign KEY (patient_id) references patients (id),
+  constraint patient_cart_price_check check ((price > (0)::numeric))
 ) TABLESPACE pg_default;
 
 create table public.medical_guidelines (

@@ -17,7 +17,7 @@ class PatientResponse(BaseModel):
     patient_id: int
     name: str
     email: str
-    user_id: int
+    user_id: str
     home_location: Coordinate
 
 
@@ -59,13 +59,15 @@ class NotificationRequest(BaseModel):
 
 
 @router.get("/get_patient", response_model=PatientResponse)
-async def get_patient(user_id: int):
+async def get_patient(user_id: str):
     conn = await asyncpg.connect(DATABASE_URL)
     try:
         query = """
-            SELECT id AS patient_id, name, email, user_id, ST_Y(home_location::geometry) AS latitude, ST_X(home_location::geometry) AS longitude
-            FROM patients
-            WHERE user_id = $1
+            SELECT p.id AS patient_id, p.name, u.email, p.user_id,
+                   ST_Y(p.home_location::geometry) AS latitude, ST_X(p.home_location::geometry) AS longitude
+            FROM patients p
+            JOIN users u ON p.user_id = u.id
+            WHERE p.user_id = $1
         """
         result = await conn.fetchrow(query, user_id)
         if not result:
@@ -80,7 +82,7 @@ async def get_patient(user_id: int):
             patient_id=result["patient_id"],
             name=result["name"],
             email=result["email"],
-            user_id=result["user_id"],
+            user_id=str(result["user_id"]),
             home_location=Coordinate(latitude=float(lat), longitude=float(lon))
         )
     except Exception as e:
@@ -94,9 +96,9 @@ async def get_prescriptions(patient_id: int):
     conn = await asyncpg.connect(DATABASE_URL)
     try:
         query = """
-            SELECT p.id AS prescription_id, p.patient_id, p.doctor_id, p.prescribed_at, p.disease_diagnosis,
+            SELECT p.id AS prescription_id, p.patient_id, p.doctor_id, p.created_at AS prescribed_at, p.disease_diagnosis,
                    ST_Y(p.location_issued::geometry) AS latitude, ST_X(p.location_issued::geometry) AS longitude,
-                   pi.medicine_id, pi.dosage_instruction, pi.duration, d.specialization AS specialization, d.name AS doctorName
+                   pi.medicine_id, pi.dosage_instruction, pi.duration_days AS duration, d.specialization AS specialization, d.name AS "doctorName"
             FROM prescriptions p
             LEFT JOIN prescription_items pi ON p.id = pi.prescription_id
             LEFT JOIN doctors d ON p.doctor_id = d.id
@@ -170,17 +172,19 @@ async def calculate_dosage(request: DosageCalculationRequest):
 @router.post("/send_notification")
 async def send_notification(request: NotificationRequest):
     try:
-        # Insert the notification into the database
-        response = supabase.table("notifications").insert({
+        # Insert the reminder into the database
+        response = supabase.table("patient_reminders").insert({
             "patient_email": request.patient_email,
             "medicine_name": request.medicine_name,
             "schedule_time": request.schedule_time.isoformat(),
             "status": request.status
         }).execute()
 
-        if response.status_code != 201:
-            raise HTTPException(status_code=500, detail="Failed to insert notification into the database")
+        if not response.data:
+            raise HTTPException(status_code=500, detail="Failed to insert reminder into the database")
 
         return {"message": "Notification scheduled successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
