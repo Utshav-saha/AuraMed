@@ -1,86 +1,186 @@
-import asyncio
+import json
+import re
+from typing import AsyncGenerator, Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query, status
-
-# pura data eksathe na pathaye , chunk kore pathabe , tai streaming response and async generator use kora hocche
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import AsyncGenerator, Optional
-import json
-from google.genai import types
-from app.database import supabase, model, gemini_client
+
+from app.database import supabase, gemini_client, get_conn, embed_query, GEMINI_MODEL
 
 router = APIRouter()
 
-class chatRequest(BaseModel):
+
+class Turn(BaseModel):
+    role: str  # user | assistant
+    text: str
+
+
+class ChatRequest(BaseModel):
     user_question: str
     generic_id: Optional[int] = None
+    history: list[Turn] = []
 
 
-async def stream_generator(user_question: str, context_text: str) -> AsyncGenerator[str, None]:
-    """
-    
-    iterates over the stream chunks, and formats them as Server-Sent Events (SSE).
+# ── routing: regex diye, gemini lagena ──
+_ROUTES = [
+    (r"\b(cart|basket|my orders?|checkout)\b", lambda m, q: "/cart", "Opening your cart"),
+    (r"\b(scan|upload)\b.*\b(prescription|script|rx)\b", lambda m, q: "/dashboard?scan=1", "Opening the prescription scanner"),
+    (r"\b(remind(er|ers)?|alarm)\b", lambda m, q: "/dashboard#reminders", "Opening your reminders"),
+    (r"\b(dos(e|age) calc(ulator)?|how many (tablets|pills|doses))\b", lambda m, q: "/dosage", "Opening the dosage calculator"),
+    (r"\b(book|appointment|see|visit|consult)\b.*?\b(doctor|dr\.?|specialist|cardiologist|dermatologist|neurologist|physician|gynecologist|pediatrician|ophthalmologist|ent|dentist|orthopedic|psychiatrist|urologist)\b",
+     lambda m, q: "/appointments?q=" + quote(m.group(2)) if m.group(2) not in ("doctor", "dr", "dr.", "specialist") else "/appointments",
+     "Opening appointments"),
+    (r"\b(appointments?)\b", lambda m, q: "/appointments", "Opening appointments"),
+    (r"\b(pharmac(y|ies)|drug ?store|where (can i|to) (buy|get|find))\b(?:.*?\b(for|buy|get|find)\b\s+(?P<med>[a-z0-9 \-]+))?",
+     lambda m, q: "/location?q=" + quote(m.group("med").strip()) if m.group("med") else "/location",
+     "Finding nearby pharmacies"),
+    (r"\b(search|find|look ?up|show)\b\s+(?:for\s+)?(?:medicine\s+)?(?P<med>[a-z0-9 \-]{2,})", lambda m, q: "/medicines?q=" + quote(m.group("med").strip()), "Searching medicines"),
+    (r"\b(dashboard|home)\b", lambda m, q: "/dashboard", "Going to your dashboard"),
+]
 
-    """
-    system_prompt = (
-        "You are a precise, clinical drug safety assistant. Your sole responsibility "
-        "is to answer the user's medical or safety question using ONLY the provided official drug leaflet context.Don't invent anything yourself\n"
-        "CRITICAL RULES:\n"
-        "1. If the context text is completely empty, or if the answer cannot be explicitly found "
-        "within the text, reply exactly with: 'I am sorry, but I cannot find that information in the official drug specifications.'\n"
-        "2. Do not use any pre-trained external medical knowledge outside the provided text.\n"
-        "3. Keep your advice clinical, objective, and accurate to the document.\n\n"
-        f"OFFICIAL LEAFLET CONTEXT:\n{context_text}\n\n"
-        f"USER QUESTION: {user_question}\n\n"
-        "ASSISTANT ANSWER:"
+# ei word gulo thakle eta question, route na
+_QUESTION_HINT = re.compile(r"\b(what|why|how|when|can i|should i|is it|does|side effect|dose|safe|interact|pregnan)\b", re.I)
+
+
+def detect_route(q: str) -> Optional[tuple[str, str]]:
+    s = q.strip().lower()
+    for pat, build, label in _ROUTES:
+        m = re.search(pat, s, re.I)
+        if m:
+            path = build(m, s)
+            # "search napa" type command e question hint thakle route dei na
+            if pat.startswith(r"\b(search") and _QUESTION_HINT.search(s):
+                return None
+            return path, label
+    return None
+
+
+_RED_FLAGS = re.compile(
+    r"\b(chest pain|can'?t breathe|difficulty breathing|unconscious|overdos(e|ed)|suicid|seizure|stroke|heavy bleeding|anaphyla)",
+    re.I,
+)
+
+SYSTEM = (
+    "You are AuraMed's medicine information assistant for patients in Bangladesh.\n"
+    "Rules:\n"
+    "1. Answer ONLY using the LEAFLET CONTEXT below. If the answer isn't there, say: "
+    "\"I couldn't find that in the official leaflet. Please ask a pharmacist or doctor.\"\n"
+    "2. Only medicine and health-safety topics. For anything else, politely decline in one sentence.\n"
+    "3. Never diagnose, never tell the user which medicine to take or change a prescribed dose. "
+    "You may explain what the leaflet says about dosage ranges.\n"
+    "4. Be short and clear. Use plain language, short paragraphs or bullets. No markdown headers.\n"
+    "5. End with one short line reminding them to confirm with their doctor or pharmacist when relevant.\n"
+)
+
+
+def _sse(obj: dict) -> str:
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+
+async def _leaflet_for_generic(conn, generic_id: int) -> Optional[dict]:
+    r = await conn.fetchrow(
+        """
+        SELECT id, name, indication_description, dosage_description, administration_description, side_effects_description,
+               contraindications_description, interaction_description, precautions_description,
+               pregnancy_and_lactation_description, overdose_effects_description, pediatric_usage_description
+        FROM generics WHERE id = $1
+        """,
+        generic_id,
+    )
+    return dict(r) if r else None
+
+
+def _leaflet_text(g: dict) -> str:
+    parts = [
+        ("INDICATIONS", g.get("indication_description")), ("DOSAGE", g.get("dosage_description")),
+        ("ADMINISTRATION", g.get("administration_description")), ("SIDE EFFECTS", g.get("side_effects_description")),
+        ("CONTRAINDICATIONS", g.get("contraindications_description")), ("INTERACTIONS", g.get("interaction_description")),
+        ("PRECAUTIONS", g.get("precautions_description")), ("PREGNANCY & LACTATION", g.get("pregnancy_and_lactation_description")),
+        ("OVERDOSE", g.get("overdose_effects_description")), ("PEDIATRIC USE", g.get("pediatric_usage_description")),
+    ]
+    body = "\n".join(f"{k}: {v}" for k, v in parts if v)
+    return f"=== {g['name']} ===\n{body}"
+
+
+async def _find_named_generic(conn, q: str) -> Optional[int]:
+    # question er vitore brand/generic naam ache kina, longest word gulo age try kori
+    words = re.findall(r"[a-zA-Z][a-zA-Z\-]{2,}", q)
+    for w in sorted(set(words), key=len, reverse=True)[:6]:
+        r = await conn.fetchrow(
+            """
+            SELECT g.id FROM generics g WHERE lower(g.name) = lower($1)
+            UNION ALL
+            SELECT m.generic_id FROM medicines m WHERE lower(m.brand_name) = lower($1) AND m.generic_id IS NOT NULL
+            LIMIT 1
+            """,
+            w,
+        )
+        if r:
+            return r["id"]
+    return None
+
+
+async def _build_context(q: str, generic_id: Optional[int]) -> tuple[str, list[str]]:
+    async with get_conn() as conn:
+        gid = generic_id or await _find_named_generic(conn, q)
+        if gid:
+            g = await _leaflet_for_generic(conn, gid)
+            if g:
+                return _leaflet_text(g), [g["name"]]
+    # last resort: semantic
+    vec = await embed_query(q)
+    res = supabase.rpc("match_leaflets", {
+        "query_embedding": vec, "match_threshold": 0.4, "match_count": 3, "target_generic_id": None,
+    }).execute()
+    rows = res.data or []
+    return "\n\n".join(f"=== {r['generic_name']} ===\n{r['content']}" for r in rows), [r["generic_name"] for r in rows]
+
+
+async def _stream(req: ChatRequest) -> AsyncGenerator[str, None]:
+    q = req.user_question.strip()
+
+    if _RED_FLAGS.search(q):
+        yield _sse({"t": "This sounds like it could be an emergency. Please call 999 or go to the nearest hospital emergency department right now. "
+                       "I can only share leaflet information and cannot help in an emergency."})
+        yield _sse({"done": True})
+        return
+
+    route = detect_route(q)
+    if route:
+        path, label = route
+        yield _sse({"route": path, "t": label + "…"})
+        yield _sse({"done": True})
+        return
+
+    try:
+        context, sources = await _build_context(q, req.generic_id)
+    except Exception as e:
+        yield _sse({"t": f"Could not look up the leaflet right now ({e})."})
+        yield _sse({"done": True})
+        return
+
+    if sources:
+        yield _sse({"sources": sources})
+
+    history = "\n".join(f"{'User' if t.role == 'user' else 'Assistant'}: {t.text}" for t in req.history[-6:])
+    prompt = (
+        f"{SYSTEM}\nLEAFLET CONTEXT:\n{context or '(empty)'}\n\n"
+        f"{'CONVERSATION SO FAR:' + chr(10) + history + chr(10) if history else ''}"
+        f"User: {q}\nAssistant:"
     )
     try:
-        response_stream = gemini_client.models.generate_content_stream(
-            model="gemini-2.5-flash",
-            contents=system_prompt
-        )
-
-        for chunk in response_stream:
+        async for chunk in await gemini_client.aio.models.generate_content_stream(model=GEMINI_MODEL, contents=prompt):
             if chunk.text:
-                # Format chunk according to standard SSE (Server-Sent Events) guidelines
-                # geminir pura response er jonno wait na kore, jehetu streaming response, tai chunk asar sathe sathe client ke pathano hocche
-                yield f"data: {chunk.text}\n\n"
-                await asyncio.sleep(0.01)
-                
+                yield _sse({"t": chunk.text})
     except Exception as e:
-        yield f"data: [ERROR: Failed to generate streaming response: {str(e)}]\n\n"
+        msg = "The assistant is busy right now (free quota). Please try again in a minute." if "429" in str(e) else f"Assistant error: {e}"
+        yield _sse({"t": msg})
+    yield _sse({"done": True})
 
 
 @router.post("/chatbot")
-async def chat_drug_safety(payload: chatRequest):
-    try:
-        formatted_query = f"search_query: {payload.user_question}"
-        query_vector = model.encode(formatted_query).tolist()
-
-        safe_generic_id = payload.generic_id if payload.generic_id != 0 else None
-
-        rpc_params = {
-            "query_embedding": query_vector,
-            "match_threshold": 0.4,
-            "match_count": 1, 
-            "target_generic_id": safe_generic_id
-        }
-        
-        db_response = supabase.rpc("match_leaflets", rpc_params).execute()
-        
-        context_text = ""
-        if db_response.data and len(db_response.data) > 0:
-            context_text = db_response.data[0].get("content", "")
-        
-        return StreamingResponse(
-            stream_generator(payload.user_question, context_text),
-            media_type="text/event-stream"
-        )
-
-    except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred during processing: {str(err)}"
-        )
-
+async def chat(req: ChatRequest):
+    return StreamingResponse(_stream(req), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

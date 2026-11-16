@@ -1,128 +1,207 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { MessageCircle, X, Send, ShieldCheck, Loader2 } from "lucide-react";
-import { api } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { MessageSquareText, X, Send, ArrowUpRight, Square } from "lucide-react";
+import { api, type ChatTurn } from "@/lib/api";
+import { useChat } from "./ChatContext";
 
-type Message = { role: "user" | "assistant"; text: string };
+interface Msg extends ChatTurn {
+  route?: string;
+  sources?: string[];
+}
 
-export default function DrugSafetyChat({ genericId = null }: { genericId?: number | null }) {
-  const [open, setOpen] = useState(false);
+const STARTERS = [
+  "What are the side effects of Napa?",
+  "Can I take Omeprazole before food?",
+  "Find pharmacy for Seclo",
+  "Book an appointment",
+];
+
+// **bold**, "- " bullets, newlines. beshi kichu na
+function renderMd(text: string) {
+  const blocks = text.split(/\n{2,}/);
+  return blocks.map((b, i) => {
+    const lines = b.split("\n");
+    const isList = lines.every((l) => /^\s*[-*•]\s+/.test(l) || !l.trim());
+    const inline = (s: string) =>
+      s.split(/(\*\*[^*]+\*\*)/g).map((p, j) => (p.startsWith("**") ? <strong key={j}>{p.slice(2, -2)}</strong> : p));
+    if (isList) {
+      return (
+        <ul key={i}>
+          {lines.filter((l) => l.trim()).map((l, j) => <li key={j}>{inline(l.replace(/^\s*[-*•]\s+/, ""))}</li>)}
+        </ul>
+      );
+    }
+    return (
+      <p key={i}>
+        {lines.map((l, j) => (
+          <span key={j}>
+            {inline(l)}
+            {j < lines.length - 1 && <br />}
+          </span>
+        ))}
+      </p>
+    );
+  });
+}
+
+export default function DrugSafetyChat() {
+  const router = useRouter();
+  const chat = useChat();
+  const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [streaming, setStreaming] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [busy, setBusy] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, open]);
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [msgs, chat.open]);
 
-  const send = useCallback(() => {
-    const question = input.trim();
-    if (!question || streaming) return;
+  // details page theke "ask about this" asle
+  useEffect(() => {
+    if (!chat.open || !chat.pendingQuestion) return;
+    const q = chat.consumePending();
+    if (q) void send(q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.open, chat.pendingQuestion]);
+
+  async function send(question: string) {
+    const q = question.trim();
+    if (!q || busy) return;
     setInput("");
-    setStreaming(true);
-    setMessages((prev) => [...prev, { role: "user", text: question }, { role: "assistant", text: "" }]);
-
-    api.streamChatbot(
-      question,
-      genericId,
-      (chunk) => {
-        setMessages((prev) => {
-          const next = [...prev];
-          next[next.length - 1] = { role: "assistant", text: next[next.length - 1].text + chunk };
-          return next;
+    const history = msgs.slice(-6).map(({ role, text }) => ({ role, text }));
+    setMsgs((m) => [...m, { role: "user", text: q }, { role: "assistant", text: "" }]);
+    setBusy(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      for await (const ev of api.chat({ user_question: q, generic_id: chat.genericId, history }, ctrl.signal)) {
+        setMsgs((m) => {
+          const last = { ...m[m.length - 1] };
+          if (ev.t) last.text += ev.t;
+          if (ev.route) last.route = ev.route;
+          if (ev.sources) last.sources = ev.sources;
+          return [...m.slice(0, -1), last];
         });
-      },
-      () => setStreaming(false),
-      () => {
-        setMessages((prev) => {
-          const next = [...prev];
-          next[next.length - 1] = {
-            role: "assistant",
-            text: next[next.length - 1].text || "Sorry, something went wrong. Please try again.",
-          };
-          return next;
-        });
-        setStreaming(false);
+        if (ev.route) setTimeout(() => router.push(ev.route!), 600);
       }
-    );
-  }, [input, streaming, genericId]);
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") {
+        setMsgs((m) => [...m.slice(0, -1), { role: "assistant", text: "Could not reach the assistant. Try again in a moment." }]);
+      }
+    } finally {
+      setBusy(false);
+      abortRef.current = null;
+    }
+  }
 
   return (
     <>
-      {/* Launcher */}
-      {!open && (
+      {!chat.open && (
         <button
-          onClick={() => setOpen(true)}
-          title="Drug Safety Assistant"
-          className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-linear-to-br from-[#5AA6E8] to-[#3A78C4] text-white flex items-center justify-center shadow-[0_6px_24px_rgba(58,120,196,0.45)] hover:scale-105 transition-transform"
+          onClick={() => chat.setOpen(true)}
+          className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-40 h-12 px-4 rounded-full bg-ink text-paper flex items-center gap-2 text-sm font-medium shadow-lg hover:bg-green transition-colors"
+          aria-label="Open assistant"
         >
-          <MessageCircle size={22} />
+          <MessageSquareText size={18} />
+          <span className="hidden sm:inline">Ask</span>
         </button>
       )}
 
-      {/* Panel */}
-      {open && (
-        <div className="fixed bottom-6 right-6 z-50 w-90 max-w-[calc(100vw-2rem)] h-130 max-h-[calc(100vh-3rem)] bg-white rounded-[22px] border border-[rgba(215,225,245,0.70)] shadow-[0_12px_48px_rgba(140,158,205,0.30)] flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 bg-linear-to-br from-[#5AA6E8] to-[#3A78C4] text-white shrink-0">
-            <div className="flex items-center gap-2">
-              <ShieldCheck size={18} />
-              <div>
-                <p className="text-[13.5px] font-semibold leading-tight">Drug Safety Assistant</p>
-                <p className="text-[10.5px] text-white/80 leading-tight">Answers grounded in official leaflets</p>
+      {chat.open && (
+        <div className="fixed inset-x-0 bottom-0 md:inset-auto md:bottom-6 md:right-6 z-50 md:w-[380px] h-[70vh] md:h-[560px] sheet shadow-2xl flex flex-col overflow-hidden rounded-b-none md:rounded-b-lg">
+          <header className="flex items-center justify-between px-4 h-12 border-b border-line bg-paper">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">Medicine assistant</div>
+              <div className="text-[11px] text-ink-3 truncate">
+                {chat.genericName ? `Context: ${chat.genericName}` : "Answers from official leaflets only"}
               </div>
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-white/20 transition-colors"
-            >
-              <X size={15} />
-            </button>
-          </div>
+            <div className="flex items-center gap-1">
+              {chat.genericId && (
+                <button onClick={() => chat.setGeneric(null)} className="text-[11px] text-ink-3 hover:text-ink px-2">
+                  clear
+                </button>
+              )}
+              <button onClick={() => chat.setOpen(false)} className="btn-ghost h-8 w-8 p-0" aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+          </header>
 
-          {/* Messages */}
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-3 bg-[#F7F9FD]">
-            {messages.length === 0 && (
-              <div className="text-center text-[12px] text-[#9DAABF] mt-6 px-4 leading-relaxed">
-                Ask about side effects, interactions, dosage, or safety — e.g. &ldquo;Can I take this with alcohol?&rdquo;
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 text-sm">
+            {msgs.length === 0 && (
+              <div className="space-y-3">
+                <p className="text-ink-2">
+                  Ask about a medicine&apos;s dose, side effects or interactions. You can also say things like
+                  &ldquo;open my cart&rdquo; or &ldquo;find pharmacy for Napa&rdquo;.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {STARTERS.map((s) => (
+                    <button key={s} onClick={() => send(s)} className="text-xs px-2.5 h-7 rounded-full border border-line bg-sheet hover:border-green hover:text-green">
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
-            {messages.map((m, i) => (
-              <div
-                key={i}
-                className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-[12.5px] leading-relaxed ${
-                  m.role === "user"
-                    ? "self-end bg-[#4D8ED6] text-white rounded-br-md"
-                    : "self-start bg-white border border-[#E6ECF7] text-[#1B2A4A] rounded-bl-md"
-                }`}
-              >
-                {m.text || (streaming && i === messages.length - 1 ? (
-                  <Loader2 size={14} className="animate-spin text-[#9DAABF]" />
-                ) : null)}
+            {msgs.map((m, i) => (
+              <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+                <div
+                  className={
+                    m.role === "user"
+                      ? "max-w-[85%] bg-ink text-paper px-3 py-2 rounded-lg rounded-br-sm"
+                      : "max-w-[90%] bg-paper px-3 py-2 rounded-lg rounded-bl-sm border border-line"
+                  }
+                >
+                  {m.role === "assistant" ? (
+                    <div className="chat-md">
+                      {m.text ? renderMd(m.text) : <span className="inline-block w-2 h-4 bg-ink-3/60 animate-pulse" />}
+                      {m.route && (
+                        <button onClick={() => router.push(m.route!)} className="mt-1 inline-flex items-center gap-1 text-green font-medium text-xs">
+                          Go <ArrowUpRight size={12} />
+                        </button>
+                      )}
+                      {m.sources && m.sources.length > 0 && (
+                        <div className="mt-1.5 text-[10px] uppercase tracking-wider text-ink-3">Source: {m.sources.join(", ")}</div>
+                      )}
+                    </div>
+                  ) : (
+                    m.text
+                  )}
+                </div>
               </div>
             ))}
+            <div ref={endRef} />
           </div>
 
-          {/* Input */}
-          <div className="px-3 py-3 border-t border-[#E6ECF7] flex items-center gap-2 shrink-0">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void send(input);
+            }}
+            className="border-t border-line p-2 flex gap-2 bg-sheet"
+          >
             <input
-              type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") send(); }}
-              placeholder="Ask a drug safety question…"
-              className="flex-1 h-10 px-3 bg-[#F3F5FB] border border-[#E6ECF7] rounded-xl text-[12.5px] text-[#1B2A4A] placeholder:text-[#9DAABF] focus:outline-none focus:border-[#4D8ED6] focus:bg-white transition-all"
+              placeholder="Ask about a medicine…"
+              className="input h-10 flex-1"
+              disabled={busy}
             />
-            <button
-              onClick={send}
-              disabled={streaming || input.trim().length === 0}
-              className="w-10 h-10 rounded-xl bg-[#4D8ED6] text-white flex items-center justify-center hover:bg-[#3A78C4] transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-            >
-              {streaming ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-            </button>
-          </div>
+            {busy ? (
+              <button type="button" onClick={() => abortRef.current?.abort()} className="btn-outline h-10 w-10 p-0" aria-label="Stop">
+                <Square size={14} />
+              </button>
+            ) : (
+              <button type="submit" className="btn-primary h-10 w-10 p-0" aria-label="Send" disabled={!input.trim()}>
+                <Send size={15} />
+              </button>
+            )}
+          </form>
+          <p className="text-[10px] text-ink-3 text-center pb-1.5 bg-sheet">Not medical advice. Confirm with your doctor or pharmacist.</p>
         </div>
       )}
     </>

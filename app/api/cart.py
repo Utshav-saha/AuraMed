@@ -1,72 +1,72 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
-from typing import List, Optional
-import asyncpg
-import re
 from collections import defaultdict
-from datetime import datetime
+from typing import List, Optional
 
-from app.database import supabase, DATABASE_URL
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, Field
+
+from app.database import supabase, get_conn
+from app.api.auth import get_current_patient, CurrentPatient
+from app.api.utils import parse_unit_price
 
 router = APIRouter()
 
 
-def _parse_unit_price(package_container: Optional[str]) -> Optional[float]:
-    if not package_container:
-        return None
-
-    after_symbol = re.search(r"৳\s*([0-9]+(?:\.[0-9]+)?)", package_container)
-    if after_symbol:
-        return float(after_symbol.group(1))
-
-    first_number = re.search(r"([0-9]+(?:\.[0-9]+)?)", package_container)
-    if first_number:
-        return float(first_number.group(1))
-
-    return None
-
 class AddToCartRequest(BaseModel):
     medicine_id: int
-    count: int
-    order_status : str = "pending"
-    assigned_pharmacy : Optional[int] = None
-    patient_id : int
+    count: int = Field(1, ge=1)
+    assigned_pharmacy: Optional[int] = None
+
+
+class UpdateCountRequest(BaseModel):
+    cart_id: int
+    count: int = Field(..., ge=1)
+
 
 class CartItemResponse(BaseModel):
     cart_id: int
     medicine_id: int
+    brand_name: Optional[str] = None
+    strength: Optional[str] = None
+    dosage_form: Optional[str] = None
     count: int
+    unit_price: Optional[float] = None
     order_status: str
+    assigned_pharmacy: Optional[int] = None
     assigned_pharmacy_name: Optional[str] = None
-    patient_id: int
+    ordered_at: Optional[str] = None
 
-class CartItem(BaseModel):
+
+class CartLine(BaseModel):
     medicine_id: int
     count: int
-   
+
+
 class CheckoutRequest(BaseModel):
-    patient_id: int
-    items: List[CartItem]
-    user_lat: float
-    user_lng: float
-    search_radius_meters: Optional[float] = 5000.0
+    user_lat: Optional[float] = None
+    user_lng: Optional[float] = None
+    search_radius_meters: float = 5000.0
 
 
 class AssignmentDetail(BaseModel):
+    cart_id: int
     medicine_id: int
+    brand_name: Optional[str]
+    count: int
     pharmacy_id: int
     pharmacy_name: str
     distance_meters: float
+    line_total: Optional[float]
 
 
 class CheckoutResponse(BaseModel):
     status: str
     assignments: List[AssignmentDetail]
-    unassigned_medicine_ids: List[int]
+    unassigned: List[CartItemResponse]
+    total_cost: float
 
 
 class CalculateCostRequest(BaseModel):
-    items: List[CartItem]
+    items: List[CartLine]
 
 
 class CostLineItem(BaseModel):
@@ -82,238 +82,243 @@ class CalculateCostResponse(BaseModel):
     line_items: List[CostLineItem]
     total_cost: float
     unpriced_medicine_ids: List[int]
-    
+
+
+class OrderGroup(BaseModel):
+    ordered_at: Optional[str]
+    pharmacy_id: Optional[int]
+    pharmacy_name: Optional[str]
+    status: str
+    items: List[CartItemResponse]
+    total: float
+
+
+_CART_SELECT = """
+    SELECT c.id AS cart_id, c.medicine_id, c.count, c.order_status, c.price, c.assigned_pharmacy, c.ordered_at,
+           m.brand_name, m.strength, m.package_container, d.name AS dosage_form,
+           p.store_name AS assigned_pharmacy_name
+    FROM patient_cart c
+    LEFT JOIN medicines m ON m.id = c.medicine_id
+    LEFT JOIN dosage_forms d ON d.id = m.dosage_form_id
+    LEFT JOIN pharmacies p ON p.id = c.assigned_pharmacy
+"""
+
+
+def _row_to_item(r) -> CartItemResponse:
+    price = float(r["price"]) if r["price"] is not None else parse_unit_price(r["package_container"])
+    return CartItemResponse(
+        cart_id=r["cart_id"], medicine_id=r["medicine_id"], brand_name=r["brand_name"],
+        strength=r["strength"], dosage_form=r["dosage_form"], count=r["count"], unit_price=price,
+        order_status=r["order_status"] or "pending", assigned_pharmacy=r["assigned_pharmacy"],
+        assigned_pharmacy_name=r["assigned_pharmacy_name"],
+        ordered_at=r["ordered_at"].isoformat() if r["ordered_at"] else None,
+    )
 
 
 @router.post("/add_to_cart")
-async def add_to_cart(request: AddToCartRequest):
-    conn = await asyncpg.connect(DATABASE_URL)
+async def add_to_cart(req: AddToCartRequest, me: CurrentPatient = Depends(get_current_patient)):
+    async with get_conn() as conn:
+        med = await conn.fetchrow("SELECT package_container FROM medicines WHERE id = $1", req.medicine_id)
+        if not med:
+            raise HTTPException(404, "Medicine not found")
+        price = parse_unit_price(med["package_container"])
 
-    try:
-        package_container_row = await conn.fetchrow(
-            "SELECT package_container FROM medicines WHERE id = $1",
-            request.medicine_id,
+        # same med already pending thakle count barai, notun row na
+        existing = await conn.fetchrow(
+            """
+            SELECT id FROM patient_cart
+            WHERE patient_id = $1 AND medicine_id = $2 AND order_status = 'pending'
+              AND assigned_pharmacy IS NOT DISTINCT FROM $3
+            """,
+            me.id, req.medicine_id, req.assigned_pharmacy,
         )
-        price = _parse_unit_price(package_container_row["package_container"])
-        query = """
+        if existing:
+            await conn.execute("UPDATE patient_cart SET count = count + $2 WHERE id = $1", existing["id"], req.count)
+            return {"cart_id": existing["id"], "merged": True}
+
+        row = await conn.fetchrow(
+            """
             INSERT INTO patient_cart (medicine_id, count, order_status, assigned_pharmacy, patient_id, price)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING id
-        """
-        result = await conn.fetchrow(query, request.medicine_id, request.count, request.order_status, request.assigned_pharmacy, request.patient_id, price)
-        return {"cart_id": result["id"]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        await conn.close()
+            VALUES ($1, $2, 'pending', $3, $4, $5) RETURNING id
+            """,
+            req.medicine_id, req.count, req.assigned_pharmacy, me.id, price,
+        )
+        return {"cart_id": row["id"], "merged": False}
+
+
+@router.post("/update_count")
+async def update_count(req: UpdateCountRequest, me: CurrentPatient = Depends(get_current_patient)):
+    async with get_conn() as conn:
+        res = await conn.execute(
+            "UPDATE patient_cart SET count = $1 WHERE id = $2 AND patient_id = $3 AND order_status = 'pending'",
+            req.count, req.cart_id, me.id,
+        )
+    if res == "UPDATE 0":
+        raise HTTPException(404, "Cart item not found")
+    return {"ok": True}
+
 
 @router.post("/remove_from_cart")
-async def remove_from_cart(cart_id: int):
-    conn = await asyncpg.connect(DATABASE_URL)
-    try:
-        query = "DELETE FROM patient_cart WHERE id = $1"
-        result = await conn.execute(query, cart_id)
-        if result == "DELETE 0":
-            raise HTTPException(status_code=404, detail="Cart item not found")
-        return {"message": "Cart item removed successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        await conn.close()
+async def remove_from_cart(cart_id: int, me: CurrentPatient = Depends(get_current_patient)):
+    async with get_conn() as conn:
+        res = await conn.execute(
+            "DELETE FROM patient_cart WHERE id = $1 AND patient_id = $2 AND order_status = 'pending'", cart_id, me.id
+        )
+    if res == "DELETE 0":
+        raise HTTPException(404, "Cart item not found")
+    return {"message": "Cart item removed"}
+
+
+@router.post("/clear")
+async def clear_cart(me: CurrentPatient = Depends(get_current_patient)):
+    async with get_conn() as conn:
+        await conn.execute("DELETE FROM patient_cart WHERE patient_id = $1 AND order_status = 'pending'", me.id)
+    return {"ok": True}
 
 
 @router.get("/get_cart_items", response_model=List[CartItemResponse])
-async def get_cart_items(patient_id: int):
-    conn = await asyncpg.connect(DATABASE_URL)
-    try:
-        query = """
-            SELECT c.id AS cart_id, c.medicine_id, c.count, c.order_status, c.patient_id, c.price,
-                   p.store_name AS assigned_pharmacy_name
-            FROM patient_cart c
-            LEFT JOIN pharmacies p ON c.assigned_pharmacy = p.id
-            WHERE c.patient_id = $1
-        """
-        results = await conn.fetch(query, patient_id)
-        return [
-            CartItemResponse(
-                cart_id=record["cart_id"],
-                medicine_id=record["medicine_id"],
-                count=record["count"],
-                order_status=record["order_status"],
-                assigned_pharmacy_name=record["assigned_pharmacy_name"],
-                patient_id=record["patient_id"]
-            )
-            for record in results
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        await conn.close()
-
-
-@router.post("/checkout", response_model=CheckoutResponse)
-async def checkout_cart(request: CheckoutRequest):
-    conn = await asyncpg.connect(DATABASE_URL)
-    try:
-        medicine_ids = [item.medicine_id for item in request.items]
-        quantity_map = {item.medicine_id: item.count for item in request.items}
-        quantities = [item.count for item in request.items]
-
-        meta_rows = await conn.fetch(
-            """
-            SELECT COALESCE(m.generic_id, 0) AS generic_id,
-                   COALESCE(m.dosage_form_id, 0) AS dosage_form_id
-            FROM unnest($1::bigint[]) WITH ORDINALITY AS u(id, ord)
-            LEFT JOIN medicines m ON m.id = u.id
-            ORDER BY u.ord
-            """,
-            medicine_ids,
-        )
-        generic_ids = [r["generic_id"] for r in meta_rows]
-        dosage_form_ids = [r["dosage_form_id"] for r in meta_rows]
-
-        rpc_data = supabase.rpc(
-            "find_nearby_pharmacy",
-            {
-                "user_lat": request.user_lat,
-                "user_lng": request.user_lng,
-                "search_radius_meters": request.search_radius_meters,
-                "target_medicine_ids": medicine_ids,
-                "target_generic_ids": generic_ids,
-                "target_quantities": quantities,
-                "target_dosage_form_ids": dosage_form_ids,
-            },
-        ).execute().data
-
-        exact_matches = [
-            row for row in rpc_data
-            if row["is_exact_match"]
-            and row["stock_count"] >= quantity_map.get(row["available_medicine_id"], 1)
-        ]
-
-        medicine_groups: dict[int, list] = defaultdict(list)
-        for row in exact_matches:
-            medicine_groups[row["available_medicine_id"]].append(row)
-
-        assignments: List[AssignmentDetail] = []
-        unassigned: List[int] = []
-
-        for med_id in medicine_ids:
-            candidates = medicine_groups.get(med_id, [])
-            if not candidates:
-                unassigned.append(med_id)
-                continue
-
-            closest = min(candidates, key=lambda r: r["distance_meters"])
-            assignments.append(
-                AssignmentDetail(
-                    medicine_id=med_id,
-                    pharmacy_id=closest["pharmacy_id"],
-                    pharmacy_name=closest["pharmacy_name"],
-                    distance_meters=closest["distance_meters"],
-                )
-            )
-
-        for detail in assignments:
-            await conn.execute(
-                """
-                UPDATE patient_cart
-                SET assigned_pharmacy = $1, order_status = 'confirmed'
-                WHERE patient_id = $2
-                  AND medicine_id = $3
-                  AND order_status = 'pending'
-                """,
-                detail.pharmacy_id,
-                request.patient_id,
-                detail.medicine_id,
-            )
-
-        return CheckoutResponse(
-            status="checkout_complete",
-            assignments=assignments,
-            unassigned_medicine_ids=unassigned,
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Checkout error: {str(e)}")
-    finally:
-        await conn.close()
+async def get_cart_items(me: CurrentPatient = Depends(get_current_patient)):
+    async with get_conn() as conn:
+        rows = await conn.fetch(_CART_SELECT + " WHERE c.patient_id = $1 AND c.order_status = 'pending' ORDER BY c.id", me.id)
+    return [_row_to_item(r) for r in rows]
 
 
 @router.post("/calculate_total_cost", response_model=CalculateCostResponse)
-async def calculate_total_cost(request: CalculateCostRequest):
-    conn = await asyncpg.connect(DATABASE_URL)
-    try:
-        medicine_ids = [item.medicine_id for item in request.items]
-        rows = await conn.fetch(
-            "SELECT id, brand_name, package_container FROM medicines WHERE id = ANY($1)",
-            medicine_ids,
+async def calculate_total_cost(req: CalculateCostRequest):
+    ids = [i.medicine_id for i in req.items]
+    async with get_conn() as conn:
+        rows = await conn.fetch("SELECT id, brand_name, package_container FROM medicines WHERE id = ANY($1::bigint[])", ids)
+    info = {r["id"]: r for r in rows}
+    lines, total, unpriced = [], 0.0, []
+    for it in req.items:
+        r = info.get(it.medicine_id)
+        price = parse_unit_price(r["package_container"]) if r else None
+        line_total = round(price * it.count, 2) if price is not None else None
+        if line_total is None:
+            unpriced.append(it.medicine_id)
+        else:
+            total += line_total
+        lines.append(CostLineItem(
+            medicine_id=it.medicine_id, brand_name=r["brand_name"] if r else None,
+            package_container=r["package_container"] if r else None, count=it.count,
+            unit_price=price, line_total=line_total,
+        ))
+    return CalculateCostResponse(line_items=lines, total_cost=round(total, 2), unpriced_medicine_ids=unpriced)
+
+
+@router.post("/checkout", response_model=CheckoutResponse)
+async def checkout(req: CheckoutRequest, me: CurrentPatient = Depends(get_current_patient)):
+    async with get_conn() as conn:
+        cart = await conn.fetch(_CART_SELECT + " WHERE c.patient_id = $1 AND c.order_status = 'pending' ORDER BY c.id", me.id)
+        if not cart:
+            raise HTTPException(400, "Cart is empty")
+
+        lat, lng = req.user_lat, req.user_lng
+        if lat is None or lng is None:
+            home = await conn.fetchrow(
+                "SELECT ST_Y(home_location::geometry) lat, ST_X(home_location::geometry) lng FROM patients WHERE id = $1", me.id
+            )
+            if not home or home["lat"] is None:
+                raise HTTPException(400, "Location needed for checkout. Allow location access or set a home address.")
+            lat, lng = home["lat"], home["lng"]
+
+        med_ids = [r["medicine_id"] for r in cart]
+        meta = await conn.fetch(
+            """
+            SELECT u.id, COALESCE(m.generic_id, 0) generic_id, COALESCE(m.dosage_form_id, 0) dosage_form_id
+            FROM unnest($1::bigint[]) WITH ORDINALITY u(id, ord) LEFT JOIN medicines m ON m.id = u.id ORDER BY u.ord
+            """,
+            med_ids,
         )
-        info = {r["id"]: r for r in rows}
+        rpc = supabase.rpc("find_nearby_pharmacy", {
+            "user_lat": lat, "user_lng": lng, "search_radius_meters": req.search_radius_meters,
+            "target_medicine_ids": med_ids,
+            "target_generic_ids": [r["generic_id"] for r in meta],
+            "target_quantities": [r["count"] for r in cart],
+            "target_dosage_form_ids": [r["dosage_form_id"] for r in meta],
+        }).execute().data or []
 
-        line_items: List[CostLineItem] = []
-        total_cost = 0.0
-        unpriced: List[int] = []
+        # medicine -> {pharmacy_id: row}, exact match only
+        offers: dict[int, dict[int, dict]] = defaultdict(dict)
+        for row in rpc:
+            if row["is_exact_match"]:
+                offers[row["available_medicine_id"]][row["pharmacy_id"]] = row
 
-        for item in request.items:
-            row = info.get(item.medicine_id)
-            brand_name = row["brand_name"] if row else None
-            package_container = row["package_container"] if row else None
-            unit_price = _parse_unit_price(package_container)
+        assignments, unassigned, total = [], [], 0.0
+        async with conn.transaction():
+            for item in cart:
+                cands = offers.get(item["medicine_id"], {})
+                pick = None
+                # user nijei pharmacy choose korle setai agey
+                if item["assigned_pharmacy"] and item["assigned_pharmacy"] in cands:
+                    pick = cands[item["assigned_pharmacy"]]
+                elif cands:
+                    pick = min(cands.values(), key=lambda r: r["distance_meters"])
+                if not pick or pick["stock_count"] < item["count"]:
+                    unassigned.append(_row_to_item(item))
+                    continue
 
-            if unit_price is None:
-                line_total = None
-                unpriced.append(item.medicine_id)
-            else:
-                line_total = round(unit_price * item.count, 2)
-                total_cost += line_total
-
-            line_items.append(
-                CostLineItem(
-                    medicine_id=item.medicine_id,
-                    brand_name=brand_name,
-                    package_container=package_container,
-                    count=item.count,
-                    unit_price=unit_price,
-                    line_total=line_total,
+                # stock kata: age expire hobe emon batch theke
+                remaining = item["count"]
+                batches = await conn.fetch(
+                    """
+                    SELECT id, stock_count FROM pharmacy_inventory
+                    WHERE pharmacy_id = $1 AND medicine_id = $2 AND is_recalled = false
+                      AND expiry_date >= current_date AND stock_count > 0
+                    ORDER BY expiry_date FOR UPDATE
+                    """,
+                    pick["pharmacy_id"], item["medicine_id"],
                 )
-            )
+                for b in batches:
+                    if remaining <= 0:
+                        break
+                    take = min(remaining, b["stock_count"])
+                    await conn.execute("UPDATE pharmacy_inventory SET stock_count = stock_count - $1 WHERE id = $2", take, b["id"])
+                    remaining -= take
+                if remaining > 0:
+                    raise HTTPException(409, f"Stock changed for {item['brand_name']}, try again")
 
-        return CalculateCostResponse(
-            line_items=line_items,
-            total_cost=round(total_cost, 2),
-            unpriced_medicine_ids=unpriced,
+                await conn.execute(
+                    "INSERT INTO sales_records (pharmacy_id, medicine_id, quantity_sold) VALUES ($1, $2, $3)",
+                    pick["pharmacy_id"], item["medicine_id"], item["count"],
+                )
+                price = float(item["price"]) if item["price"] is not None else parse_unit_price(item["package_container"])
+                await conn.execute(
+                    """
+                    UPDATE patient_cart SET assigned_pharmacy = $1, order_status = 'confirmed', ordered_at = now(), price = $2
+                    WHERE id = $3
+                    """,
+                    pick["pharmacy_id"], price, item["cart_id"],
+                )
+                line_total = round(price * item["count"], 2) if price else None
+                total += line_total or 0
+                assignments.append(AssignmentDetail(
+                    cart_id=item["cart_id"], medicine_id=item["medicine_id"], brand_name=item["brand_name"],
+                    count=item["count"], pharmacy_id=pick["pharmacy_id"], pharmacy_name=pick["pharmacy_name"],
+                    distance_meters=pick["distance_meters"], line_total=line_total,
+                ))
+
+    status = "checkout_complete" if not unassigned else ("partial" if assignments else "nothing_available")
+    return CheckoutResponse(status=status, assignments=assignments, unassigned=unassigned, total_cost=round(total, 2))
+
+
+@router.get("/past_orders", response_model=List[OrderGroup])
+async def past_orders(me: CurrentPatient = Depends(get_current_patient)):
+    async with get_conn() as conn:
+        rows = await conn.fetch(
+            _CART_SELECT + " WHERE c.patient_id = $1 AND c.order_status <> 'pending' ORDER BY c.ordered_at DESC NULLS LAST, c.id DESC",
+            me.id,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cost calculation error: {str(e)}")
-    finally:
-        await conn.close()
-
-
-@router.get("/past_orders", response_model=List[CartItemResponse])
-async def past_orders(patient_id: int):
-    conn = await asyncpg.connect(DATABASE_URL)
-    try:
-        query = """
-            SELECT c.id AS cart_id, c.medicine_id, c.count, c.order_status, c.patient_id,
-                   p.store_name AS assigned_pharmacy_name
-            FROM patient_cart c
-            LEFT JOIN pharmacies p ON c.assigned_pharmacy = p.id
-            WHERE c.patient_id = $1 AND c.order_status != 'pending'
-        """
-        results = await conn.fetch(query, patient_id)
-        return [
-            CartItemResponse(
-                cart_id=record["cart_id"],
-                medicine_id=record["medicine_id"],
-                count=record["count"],
-                order_status=record["order_status"],
-                assigned_pharmacy_name=record["assigned_pharmacy_name"],
-                patient_id=record["patient_id"]
+    groups: dict[tuple, OrderGroup] = {}
+    for r in rows:
+        key = (r["ordered_at"].replace(second=0, microsecond=0) if r["ordered_at"] else None, r["assigned_pharmacy"])
+        item = _row_to_item(r)
+        g = groups.get(key)
+        if not g:
+            g = groups[key] = OrderGroup(
+                ordered_at=item.ordered_at, pharmacy_id=r["assigned_pharmacy"],
+                pharmacy_name=r["assigned_pharmacy_name"], status=item.order_status, items=[], total=0.0,
             )
-            for record in results
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        await conn.close()
+        g.items.append(item)
+        g.total = round(g.total + (item.unit_price or 0) * item.count, 2)
+    return list(groups.values())

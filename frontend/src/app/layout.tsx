@@ -1,36 +1,48 @@
-import type { Metadata } from "next";
-import { Plus_Jakarta_Sans, Fraunces } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Fraunces, IBM_Plex_Sans, IBM_Plex_Mono, Caveat } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 
-// UI / body — warm, humanist, highly legible
-const jakarta = Plus_Jakarta_Sans({
-  variable: "--font-sans-base",
+const body = IBM_Plex_Sans({
+  variable: "--font-body",
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
 });
 
-// Headings — soft, editorial serif (variable font, optical sizing)
-const fraunces = Fraunces({
+const display = Fraunces({
   variable: "--font-display",
   subsets: ["latin"],
   style: ["normal", "italic"],
+  axes: ["opsz", "SOFT"],
+});
+
+const mono = IBM_Plex_Mono({
+  variable: "--font-mono",
+  subsets: ["latin"],
+  weight: ["400", "500"],
+});
+
+// prescription er handwriting er jonno
+const hand = Caveat({
+  variable: "--font-hand",
+  subsets: ["latin"],
+  weight: ["400", "600"],
 });
 
 export const metadata: Metadata = {
-  title: "AuraMed",
-  description: "Your health, beautifully cared for.",
+  title: { default: "AuraMed", template: "%s · AuraMed" },
+  description: "Medicines, prescriptions, pharmacies and doctors in one place.",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export const viewport: Viewport = {
+  themeColor: "#f4f1e8",
+  width: "device-width",
+  initialScale: 1,
+};
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html
-      lang="en"
-      className={`${jakarta.variable} ${fraunces.variable} h-full antialiased`}
-    >
+    <html lang="en" className={`${body.variable} ${display.variable} ${mono.variable} ${hand.variable} h-full`}>
       <body className="min-h-full flex flex-col">
         <AuthProvider>{children}</AuthProvider>
       </body>

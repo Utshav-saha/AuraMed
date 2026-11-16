@@ -44,7 +44,7 @@ RETURNS TABLE (
   generic_name text,
   similarity float
 )
-LANGUAGE plpgsql ACCESS ASYNC
+LANGUAGE plpgsql
 AS $$
 BEGIN
   RETURN QUERY
@@ -65,7 +65,7 @@ $$;
 
 -- unnest
 
-CREATE OR REPLACE FUNCTION find_nearby_pharmacy (
+create or replace function public.find_nearby_pharmacy (
   user_lat double precision,
   user_lng double precision,
   search_radius_meters double precision,
@@ -74,7 +74,7 @@ CREATE OR REPLACE FUNCTION find_nearby_pharmacy (
   target_quantities int[],
   target_dosage_form_ids int[]
 )
-RETURNS TABLE (
+returns table (
   pharmacy_id bigint,
   pharmacy_name text,
   distance_meters double precision,
@@ -84,48 +84,47 @@ RETURNS TABLE (
   stock_count int,
   is_exact_match boolean
 )
-LANGUAGE plpgsql
-AS $$
-DECLARE
+language plpgsql
+as $$
+declare
   user_location geography;
-BEGIN
+begin
   user_location := ST_SetSRID(ST_MakePoint(user_lng, user_lat), 4326)::geography;
 
-  RETURN QUERY
-  -- ZIPPER TRICK: Convert the 4 arrays into a temporary "cart" table
-  WITH cart AS (
-    SELECT
-      unnest(target_medicine_ids) AS req_med_id,
-      unnest(target_generic_ids) AS req_gen_id,
-      unnest(target_quantities) AS req_qty,
-      unnest(target_dosage_form_ids) AS req_dosage_form_id
+  return query
+  with cart as (
+    select
+      unnest(target_medicine_ids) as req_med_id,
+      unnest(target_generic_ids) as req_gen_id,
+      unnest(target_quantities) as req_qty,
+      unnest(target_dosage_form_ids) as req_dosage_form_id
+  ),
+  stock as (
+    select pi.pharmacy_id, pi.medicine_id, sum(pi.stock_count)::int as total
+    from public.pharmacy_inventory pi
+    where pi.is_recalled = false and pi.expiry_date >= current_date
+    group by pi.pharmacy_id, pi.medicine_id
   )
-
-  SELECT
-    p.id AS pharmacy_id,
-    p.store_name AS pharmacy_name,
-    ST_Distance(p.coordinates, user_location) AS distance_meters,
-    pi.medicine_id AS available_medicine_id,
-    m.generic_id AS available_generic_id,
-    m.dosage_form_id AS available_dosage_form_id,
-    pi.stock_count,
-    (pi.medicine_id = c.req_med_id) AS is_exact_match
-  FROM public.pharmacies p
-  JOIN public.pharmacy_inventory pi ON p.id = pi.pharmacy_id
-  JOIN public.medicines m ON pi.medicine_id = m.id
-  JOIN cart c ON (
-    pi.medicine_id = c.req_med_id
-    OR (m.generic_id = c.req_gen_id AND m.dosage_form_id = c.req_dosage_form_id)
+  select
+    p.id,
+    p.store_name,
+    ST_Distance(p.coordinates, user_location),
+    s.medicine_id,
+    m.generic_id,
+    m.dosage_form_id,
+    s.total,
+    (s.medicine_id = c.req_med_id)
+  from public.pharmacies p
+  join stock s on s.pharmacy_id = p.id
+  join public.medicines m on m.id = s.medicine_id
+  join cart c on (
+    s.medicine_id = c.req_med_id
+    or (m.generic_id = c.req_gen_id and m.dosage_form_id = c.req_dosage_form_id)
   )
-
-  WHERE
-    pi.stock_count >= c.req_qty
-    AND pi.is_recalled = false
-    AND pi.expiry_date >= CURRENT_DATE
-    AND ST_DWithin(p.coordinates, user_location, search_radius_meters)
-  ORDER BY
-    distance_meters ASC;
-END;
+  where s.total >= c.req_qty
+    and ST_DWithin(p.coordinates, user_location, search_radius_meters)
+  order by 3 asc;
+end;
 $$;
 
 
@@ -171,40 +170,67 @@ END;
 $$;
 
 
-CREATE OR REPLACE FUNCTION process_medicine_reminders()
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE
-  reminder RECORD;
-  resend_api_key text := 'resend api key'; 
+create or replace function public.process_medicine_reminders()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  grp record;
+  api_key text;
   payload jsonb;
-BEGIN
-  FOR reminder IN 
-    SELECT id, patient_email, medicine_name, schedule_time 
-    FROM public.patient_reminders 
-    WHERE status = 'pending' 
-      AND schedule_time > NOW() 
-      AND schedule_time <= (NOW() + INTERVAL '10 minutes')
-  LOOP
-    
+  lines text;
+begin
+  select decrypted_secret into api_key
+  from vault.decrypted_secrets where name = 'resend_api_key' limit 1;
+
+  if api_key is null then
+    raise notice 'resend_api_key vault e nai, skip';
+    return;
+  end if;
+
+  -- same email + same minute er dose gulo ek mail e
+  for grp in
+    with due as (
+      select id, patient_email, medicine_name, schedule_time, dose_label
+      from public.patient_reminders
+      where status = 'pending'
+        and schedule_time between now() - interval '5 minutes' and now() + interval '10 minutes'
+      for update skip locked
+    )
+    select patient_email,
+           date_trunc('minute', schedule_time) as at,
+           max(dose_label) as dose_label,
+           array_agg(id) as ids,
+           string_agg(medicine_name, ', ' order by medicine_name) as meds
+    from due
+    group by patient_email, date_trunc('minute', schedule_time)
+  loop
+    lines := '<p>It is almost time for your ' || coalesce(grp.dose_label, '') || ' dose.</p>'
+          || '<p><strong>' || grp.meds || '</strong></p>'
+          || '<p>Scheduled at ' || to_char(grp.at at time zone 'Asia/Dhaka', 'HH12:MI AM') || ' (Dhaka time).</p>'
+          || '<p style="color:#777;font-size:12px">AuraMed reminder</p>';
+
     payload := jsonb_build_object(
-      'from', 'Acme <onboarding@resend.dev>', 
-      'to', reminder.patient_email,
-      'subject', 'Medicine Reminder: ' || reminder.medicine_name,
-      'html', '<p>Hi! It is almost time for your medicine.</p><p>Please take your <strong>' || reminder.medicine_name || '</strong> at ' || to_char(reminder.schedule_time, 'HH12:MI AM') || '.</p>'
+      'from', 'AuraMed <onboarding@resend.dev>',
+      'to', grp.patient_email,
+      'subject', 'Medicine reminder: ' || grp.meds,
+      'html', lines
     );
 
-    PERFORM net.http_post(
+    perform net.http_post(
       url := 'https://api.resend.com/emails',
       body := payload,
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'Authorization', 'Bearer ' || resend_api_key
+        'Authorization', 'Bearer ' || api_key
       )
     );
-    
-  END LOOP;
-END;
+
+    update public.patient_reminders
+      set status = 'sent', sent_at = now()
+      where id = any(grp.ids);
+  end loop;
+end;
 $$;

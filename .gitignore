@@ -24,3 +24,8 @@ go.work.sum
 # env file
 .env
 *.csv
+
+# python / mac junk
+__pycache__/
+*.pyc
+.DS_Store
